@@ -58,10 +58,20 @@ export default function NewListingPage() {
     }
     setLoading(true)
     try {
+      // valueLeaves is a string in form state, because that is what a DOM
+      // input holds. The API schema is z.number(), so spreading the form
+      // straight into the body made every submit carrying a value a 400.
+      // Blank means "no value": the field is omitted and the server fills in
+      // its suggested value.
+      const trimmedValue = form.valueLeaves.trim()
       const res = await fetch("/api/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, images }),
+        body: JSON.stringify({
+          ...form,
+          valueLeaves: trimmedValue === "" ? null : Number(trimmedValue),
+          images,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to create listing")
@@ -134,7 +144,7 @@ export default function NewListingPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Estimated Value in Leaves <span className="text-gray-400 font-normal">optional</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Estimated Value in Leaves <span className="text-gray-400 font-normal">optional — leave blank to use the suggested value</span></label>
           <input
             type="number"
             min="0"
@@ -143,6 +153,10 @@ export default function NewListingPage() {
             placeholder="e.g. 700"
             className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
+          <p className="mt-1.5 text-xs text-gray-500">
+            We estimate a value from the category, the condition, and comparable
+            completed trades. Your figure has to stay within 25% of that estimate.
+          </p>
         </div>
 
         <div>

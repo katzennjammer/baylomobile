@@ -132,6 +132,12 @@ export const ITEM_PUBLIC_SELECT = {
   category: true,
   condition: true,
   valueLeaves: true,
+  // The valuation provenance travels with the value. A client that renders a
+  // number the model produced and a number the owner typed identically, with no
+  // way to tell them apart, is the interface that made the old AI attribution
+  // sound true in the first place.
+  suggestedLeaves: true,
+  valuationSource: true,
   status: true,
   wantedItems: true,
   imageHash: true,

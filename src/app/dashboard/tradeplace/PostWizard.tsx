@@ -151,7 +151,26 @@ function XIcon({ size = 12, color = "currentColor" }: { size?: number; color?: s
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Comparable { label: string; sublabel: string; leaves: string; }
 type DupStatus = "idle" | "checking" | "passed" | "failed" | "self";
-type ValueSub  = "intro" | "scanning" | "result";
+type ValueSub  = "intro" | "estimating" | "result";
+
+/**
+ * What the valuation endpoint returns.
+ *
+ * `allowed` is the server's own override band. The slider is clamped to exactly
+ * these numbers rather than to a percentage recomputed here: a client that
+ * derives the bounds itself is a client that can be one rounding rule away from
+ * offering the user a value the server then rejects with a 400.
+ */
+interface Valuation {
+  suggestedLeaves: number;
+  min: number;
+  max: number;
+  allowed: { min: number; max: number };
+  valuationSource: "comparables" | "category_band";
+  sampleSize: number;
+  comparables: Comparable[];
+  basis: string;
+}
 
 interface Props {
   onClose:     () => void;
@@ -212,16 +231,17 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
   }, [images]);
 
   // Step 2 — Value
-  const prevCat = useRef(category);
+  const prevCat  = useRef(category);
+  const prevCond = useRef(condition);
   const [valueSub,    setValueSub]    = useState<ValueSub>(() =>
     isEdit ? "result" : "intro"
   );
-  const [valueRange,  setValueRange]  = useState({ min: 0, max: 0, midpoint: 0 });
+  const [valuation,   setValuation]   = useState<Valuation | null>(null);
   const [userValue,   setUserValue]   = useState<number>(() =>
     initialItem?.valueLeaves ?? 0
   );
-  const [comparables, setComparables] = useState<Comparable[]>([]);
   const [valueError, setValueError] = useState("");
+  const [showBasis,  setShowBasis]  = useState(false);
 
   // Step 3 — Ask
   const [wantedText, setWantedText] = useState(() => parseWanted(initialItem));
@@ -369,38 +389,66 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
     }
   }
 
-  // ── Value scan ────────────────────────────────────────────────────────────
-  async function scanValue() {
-    setValueSub("scanning");
+  // ── Suggested value ───────────────────────────────────────────────────────────
+  // Calls /api/v1/valuation. NOT an AI call, and no longer described as one:
+  // the number comes from a statistical model over category, condition and
+  // settled Baylo trades. The copy this replaced credited the number to an AI
+  // scan the app has never performed.
+  //
+  // No local band table, deliberately. The server owns the bands; a copy here
+  // would drift, and the drift would surface as a slider offering values the
+  // server rejects.
+  async function estimateValue() {
+    setValueSub("estimating");
     try {
-      const res  = await fetch(`/api/ai/value?category=${category}`);
-      if (!res.ok) throw new Error(`value endpoint returned ${res.status}`);
-      const data = await res.json() as {
-        min: number; max: number; midpoint: number; comparables: Comparable[];
+      const params = new URLSearchParams({ category, condition });
+      // Editing an existing listing re-values it, which spends that listing's
+      // one re-valuation. A new listing has no row to spend against yet.
+      if (isEdit && initialItem) params.set("itemId", initialItem.id);
+
+      const res  = await fetch(`/api/v1/valuation?${params}`);
+      const body = await res.json() as {
+        data: Valuation | null;
+        error: { code: string; message: string } | null;
       };
+
+      if (!res.ok || !body.data) {
+        // A spent re-valuation is not a crash. The listing keeps the value it
+        // already has and the owner is told why the estimate did not re-run.
+        setValuation(null);
+        setValueError(body.error?.message ?? "Couldn't load the suggested value — enter your own asking value below.");
+        setValueSub("result");
+        return;
+      }
+
       setValueError("");
-      setValueRange({ min: data.min, max: data.max, midpoint: data.midpoint });
-      setUserValue(data.midpoint);
-      setComparables(data.comparables ?? []);
+      setValuation(body.data);
+      setUserValue(body.data.suggestedLeaves);
       setValueSub("result");
     } catch {
-      // No local band table on purpose: /api/ai/value owns the value bands.
-      // If it cannot be reached we ask the user for a value instead of
-      // guessing from a copy that would silently drift out of sync.
-      setValueRange({ min: 0, max: 0, midpoint: 0 });
-      setValueError("Couldn't load suggested values — enter your own asking value below.");
+      setValuation(null);
+      setValueError("Couldn't load the suggested value — enter your own asking value below.");
       setValueSub("result");
     }
   }
 
-  // Reset value if category changed between scans
+  // The suggestion is a function of category AND condition, so editing either
+  // invalidates it. This used to watch category only, which is how a listing
+  // edited from Like New to Poor kept its Like New suggestion.
+  function invalidateValuation() {
+    setValueSub("intro");
+    setValuation(null);
+    setValueError("");
+  }
+
   function handleCategoryChange(val: string) {
     setCategory(val);
-    if (val !== prevCat.current) {
-      prevCat.current = val;
-      setValueSub("intro");
-      setValueRange({ min: 0, max: 0, midpoint: 0 });
-    }
+    if (val !== prevCat.current) { prevCat.current = val; invalidateValuation(); }
+  }
+
+  function handleConditionChange(val: string) {
+    setCondition(val);
+    if (val !== prevCond.current) { prevCond.current = val; invalidateValuation(); }
   }
 
   // ── Post ──────────────────────────────────────────────────────────────────
@@ -466,19 +514,28 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
     images.length === originalImages.current.length &&
     images.every((url, i) => url === originalImages.current[i]);
 
+  // The server's band, not a locally recomputed one. With no valuation loaded
+  // there is nothing to bound against and anything is accepted here — the
+  // server still computes its own suggestion on POST and rejects an out-of-band
+  // value, so this is a hint and never the enforcement.
+  const allowed   = valuation?.allowed ?? null;
+  const valueOk   = !allowed || (userValue >= allowed.min && userValue <= allowed.max);
+  const valueStatus = !allowed
+    ? ""
+    : userValue > allowed.max
+    ? `Above the allowed range — the most you can ask is ${fmtLeaves(allowed.max)}`
+    : userValue < allowed.min
+    ? `Below the allowed range — the least you can ask is ${fmtLeaves(allowed.min)}`
+    : `Within ${fmtLeaves(allowed.min)}–${fmtLeaves(allowed.max)} of the suggested value.`;
+
   const canContinue =
     step === 0 ? images.length > 0 :
     step === 1 ? title.trim().length > 0 && !identifying && dupStatus !== "failed" && dupStatus !== "checking" :
-    step === 2 ? valueSub === "result" :
+    // An out-of-band value cannot advance. Letting it through would mean
+    // collecting two more screens of input and then losing them to a 400 on the
+    // final POST.
+    step === 2 ? valueSub === "result" && valueOk && userValue > 0 :
     true;
-
-  const valueOk    = valueRange.max === 0 || (userValue >= valueRange.min && userValue <= valueRange.max);
-  const valueAbove = valueRange.max > 0 && userValue > valueRange.max;
-  const valueStatus = valueAbove
-    ? "Above the suggested range — harder to get offers"
-    : !valueOk
-    ? "Below the suggested range — consider revising up"
-    : "Within the suggested range — fair and likely to trade.";
 
   const askChips = [
     "Open to offers",
@@ -512,8 +569,8 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
       if (identifying) return <span className="pw2-footer-status"><Spin size={13} />Analyzing photo…</span>;
       if (dupStatus === "checking") return <span className="pw2-footer-status"><Spin size={13} />Checking for duplicates…</span>;
     }
-    if (step === 2 && valueSub === "scanning")
-      return <span className="pw2-footer-status"><Spin size={13} />Scanning Baylo trade history…</span>;
+    if (step === 2 && valueSub === "estimating")
+      return <span className="pw2-footer-status"><Spin size={13} />Estimating from Baylo trade history…</span>;
     if (posting)
       return <span className="pw2-footer-status"><Spin size={13} />{isEdit ? "Saving…" : "Posting…"}</span>;
     return null;
@@ -540,8 +597,9 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
               <div className="pw2-camera-badge"><Camera size={26} /></div>
               <p className="pw2-drop-title">Add photos of your item</p>
               <p className="pw2-drop-sub">
-                Drag &amp; drop or click to browse. Our AI analyzes <em>your</em> photos
-                to help identify the item and set a fair value.
+                Drag &amp; drop or click to browse. AI reads <em>your</em> photos to
+                identify the item and its condition; the estimated value is then
+                calculated from those, not written by the AI.
               </p>
               <div className="pw2-add-photos-cta">
                 <PlusIcon size={15} /> Add photos
@@ -664,7 +722,7 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
               <div className="pw2-field" style={{ marginBottom: 0 }}>
                 <label>CONDITION</label>
                 <select className="pw2-select" value={condition}
-                  onChange={e => setCondition(e.target.value)}>
+                  onChange={e => handleConditionChange(e.target.value)}>
                   {CONDITIONS.map(({ value, label }) =>
                     <option key={value} value={value}>{label}</option>
                   )}
@@ -744,46 +802,74 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
       return (
         <div className="pw2-value-center">
           <div className="pw2-globe-badge"><Globe size={32} /></div>
-          <h3>Find a fair value with AI</h3>
+          <h3>Get a suggested value</h3>
           <p>
-            We&rsquo;ll estimate a fair value range in Pasa Leaves from Baylo trade history
-            and category averages, so you know what to ask in return.
+            We calculate an estimated value in Pasa Leaves from your item&rsquo;s
+            category, its condition, and comparable completed trades on Baylo.
+            You can adjust it before you post.
           </p>
         </div>
       );
     }
 
-    if (valueSub === "scanning") {
+    if (valueSub === "estimating") {
       return (
         <div className="pw2-value-center">
           <div className="pw2-globe-badge" style={{ animation: "pw2-pulse 1.4s ease-in-out infinite" }}>
             <Globe size={32} />
           </div>
-          <h3>Scanning Baylo trades…</h3>
-          <p>Checking completed swaps and category averages to estimate a fair value range.</p>
+          <h3>Calculating estimated value…</h3>
+          <p>Checking completed {catLabel.toLowerCase()} swaps and the category band for {condLabel.toLowerCase()} condition.</p>
         </div>
       );
     }
 
     // Result
-    const { min, max, midpoint } = valueRange;
-    const hasRange = max > 0;
+    const hasRange = valuation != null;
+    const min = valuation?.min ?? 0;
+    const max = valuation?.max ?? 0;
+    const suggested = valuation?.suggestedLeaves ?? 0;
     const range = max - min || 1;
-    const handlePct = ((midpoint - min) / range) * 100;
+    // Clamped: with very few comparables the suggestion can sit at an end of
+    // the displayed range, and an unclamped percentage puts the handle outside
+    // its own bar.
+    const handlePct = Math.min(100, Math.max(0, ((suggested - min) / range) * 100));
+
+    // Which path produced the number, in the user's words. The panel says this
+    // out loud because a value the platform calculated and a value the owner
+    // typed are different claims, and the old panel rendered them identically
+    // under a heading that credited both to an AI.
+    const sourceNote = valuation?.valuationSource === "comparables"
+      ? `${valuation.sampleSize} comparable completed trade${valuation.sampleSize === 1 ? "" : "s"}`
+      : "category & condition band";
 
     return (
       <div>
-        {/* Estimated value panel — only when a scan has been run */}
-        {hasRange && (
+        {/* Suggested value panel — only once an estimate has been calculated */}
+        {hasRange && valuation && (
           <div className="pw2-est-panel">
             <div className="pw2-est-header">
-              <span><Sparkle size={11} /> AI SUGGESTED VALUE</span>
-              <span>from {catLabel.toLowerCase()} history · edit freely below</span>
+              <span>
+                SUGGESTED VALUE
+                {/* The tooltip. Text comes from the server alongside the number
+                    so it always describes the calculation that actually ran. */}
+                <button
+                  type="button"
+                  className="pw2-info-btn"
+                  aria-label="How this value was calculated"
+                  aria-expanded={showBasis}
+                  onClick={() => setShowBasis(v => !v)}
+                >?</button>
+              </span>
+              <span>{catLabel.toLowerCase()} · {condLabel.toLowerCase()} · {sourceNote}</span>
             </div>
+            {showBasis && (
+              <p className="pw2-basis" role="note">{valuation.basis}</p>
+            )}
             <div style={{ position: "relative", padding: "24px 0 4px" }}>
               <div className="pw2-est-bar">
                 <div className="pw2-est-handle" style={{ left: `${handlePct}%` }}>
-                  <div className="pw2-est-handle-label">{fmtLeaves(midpoint)}</div>
+                  <div className="pw2-est-handle-label">{fmtLeaves(suggested)}</div>
                 </div>
               </div>
             </div>
@@ -796,10 +882,17 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
 
         {/* User asking value */}
         <div className="pw2-ask-card">
-          <p className="pw2-ask-card-header">YOUR ASKING VALUE <span style={{ fontWeight: 400, textTransform: "none", fontSize: 11, color: "#9CA3AF" }}>{hasRange ? "— AI suggestion pre-filled, change it to whatever you want" : "— set your asking value in Leaves"}</span></p>
+          <p className="pw2-ask-card-header">YOUR ASKING VALUE <span style={{ fontWeight: 400, textTransform: "none", fontSize: 11, color: "#9CA3AF" }}>{allowed ? `— suggestion pre-filled; adjust between ${fmtLeaves(allowed.min)} and ${fmtLeaves(allowed.max)}` : "— set your asking value in Leaves"}</span></p>
           <div className="pw2-ask-value-row">
+            {/* Not clamped on change. Typing 5 on the way to 500 would be
+                rewritten to the minimum under the cursor, which makes the field
+                unusable; the value is validated instead, and canContinue holds
+                the wizard until it is in range. */}
             <input className="pw2-ask-pts-input"
-              type="number" min={0} max={999999}
+              type="number"
+              min={allowed?.min ?? 0}
+              max={allowed?.max ?? 999999}
+              aria-invalid={!valueOk}
               value={userValue}
               onChange={e => setUserValue(Math.max(0, Number(e.target.value)))} />
             <span className="pw2-ask-pts-unit">Leaves</span>
@@ -809,12 +902,17 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
               {valueError}
             </p>
           )}
-          {hasRange && (
+          {allowed && (
             <>
+              {/* The slider CANNOT leave the allowed band. Its old bounds were
+                  the suggested range widened by 20% either side, so it offered
+                  values the server now refuses. Typing one into the field above
+                  is still possible and is caught by valueOk. */}
               <input className="pw2-ask-slider"
-                type="range" min={Math.max(0, min - Math.round(range * 0.2))}
-                max={max + Math.round(range * 0.2)}
-                value={userValue}
+                type="range"
+                min={allowed.min}
+                max={allowed.max}
+                value={Math.min(allowed.max, Math.max(allowed.min, userValue))}
                 onChange={e => setUserValue(Number(e.target.value))} />
               <p className={`pw2-ask-status ${valueOk ? "ok" : "warn"}`}>{valueStatus}</p>
             </>
@@ -822,10 +920,10 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
         </div>
 
         {/* Comparables */}
-        {comparables.length > 0 && (
+        {valuation && valuation.comparables.length > 0 && (
           <div className="pw2-comps">
-            <p className="pw2-comps-label">COMPARABLE LISTINGS</p>
-            {comparables.map((c, i) => (
+            <p className="pw2-comps-label">WHAT THIS IS BASED ON</p>
+            {valuation.comparables.map((c, i) => (
               <div key={i} className="pw2-comp-row">
                 <div className="pw2-comp-left">
                   <p>{c.label}</p>
@@ -866,9 +964,9 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
             placeholder="Describe what you're after, or leave open to offers…" />
         </div>
 
-        {/* AI suggestion chips */}
+        {/* Trade-up chips, anchored to the estimated range */}
         <p style={{ fontSize: 12.5, color: "#6B7280", marginBottom: 6 }}>
-          ✨ AI suggests items around {fmtLeaves(valueRange.min || userValue)} – {fmtLeaves(valueRange.max || userValue + 200)}:
+          Items around {fmtLeaves(valuation?.min ?? userValue)} – {fmtLeaves(valuation?.max ?? userValue + 200)} are an even swap:
         </p>
         <div className="pw2-chips" style={{ marginBottom: 18 }}>
           {askChips.map(chip => (
@@ -1057,13 +1155,13 @@ export default function PostWizard({ onClose, onPosted, initialItem, me }: Props
               </button>
             )}
             {step === 2 && valueSub === "intro" && (
-              <button className="pw2-btn-primary" onClick={scanValue}>
-                🌐 Scan for value
+              <button className="pw2-btn-primary" onClick={estimateValue}>
+                🌐 Get estimated value
               </button>
             )}
-            {step === 2 && valueSub === "scanning" && (
+            {step === 2 && valueSub === "estimating" && (
               <button className="pw2-btn-primary" disabled>
-                <Spin size={14} color="#fff" /> Scanning…
+                <Spin size={14} color="#fff" /> Calculating…
               </button>
             )}
             {step === 2 && valueSub === "result" && (

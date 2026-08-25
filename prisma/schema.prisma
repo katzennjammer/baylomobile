@@ -168,7 +168,38 @@ model Item {
   images      String     @db.Text
   category    Category
   condition   Condition
+  // The FINAL value: what the owner is asking, after any override they made.
+  // This is the number every other surface reads. It is bounded server-side to
+  // OVERRIDE_BAND_PCT either side of suggestedLeaves (see @/lib/valuation).
   valueLeaves Int?
+
+  // The valuation model's own number, before the owner touched it. Stored
+  // alongside the final value rather than instead of it so the divergence
+  // between what the model said and what people listed at is MEASURABLE:
+  //   SELECT AVG((valueLeaves - suggestedLeaves) / suggestedLeaves) FROM Item
+  //   WHERE suggestedLeaves IS NOT NULL;
+  // NULL means the listing predates the valuation system (see the 2026-08-25
+  // migration) — it does not mean "no suggestion was made".
+  suggestedLeaves Int?
+
+  // Which path produced suggestedLeaves: "comparables" or "category_band",
+  // exactly those strings. A plain VARCHAR and not an enum on purpose: the same
+  // two literals go out on the wire, and a wire value generated from a DB enum
+  // name is one that changes the day someone renames the enum. The writable set
+  // is closed in code by VALUATION_SOURCES in @/lib/valuation.
+  //
+  // This column exists to answer one question with a query instead of a guess:
+  // how many listings were valued from real Baylo trade history rather than the
+  // fallback band table.
+  valuationSource String? @db.VarChar(32)
+
+  // Re-valuations already spent on this listing. Capped at MAX_REVALUATIONS.
+  // The model is deterministic, so re-running it on unchanged inputs returns
+  // the identical number; the only way a repeat request moves the suggestion is
+  // if the category or condition was edited. One correction is allowed, then
+  // the listing is done shopping for a friendlier number.
+  revaluationCount Int @default(0)
+
   status      ItemStatus @default(AVAILABLE)
 
   // Free text only: what the owner wants in return. This column used to double

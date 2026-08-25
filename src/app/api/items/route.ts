@@ -3,6 +3,7 @@ import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { awardTaskAsync } from "@/lib/tasks"
 import { createItemSchema, parseBody, categorySchema } from "@/lib/validation"
+import { decideItemValue } from "@/lib/valuation-server"
 import {
   ITEM_PUBLIC_SELECT,
   ITEM_PUBLIC_USER_SELECT,
@@ -78,6 +79,29 @@ export async function POST(req: NextRequest) {
 
     const resolvedTitle = body.title ?? body.wantedItem!
 
+    // ── Valuation ───────────────────────────────────────────────────────────
+    // The value is not simply whatever the client sent. The server recomputes
+    // the suggestion for this (category, condition) from the same deterministic
+    // model the listing wizard was shown, and the submitted number has to fall
+    // inside OVERRIDE_BAND_PCT of it. The client is not trusted to report the
+    // suggestion it was given — it does not need to be, because the model
+    // returns the same number to anyone who asks with the same two labels.
+    //
+    // A listing with no value takes the suggestion, so `suggestedLeaves` and
+    // `valueLeaves` are both populated on every listing created from here and
+    // the divergence between them is measurable.
+    const valued = await decideItemValue(body.category, body.condition, body.valueLeaves)
+    if (!valued.ok) {
+      return NextResponse.json(
+        {
+          error: valued.message,
+          suggestedLeaves: valued.suggestedLeaves,
+          allowed: valued.allowed,
+        },
+        { status: 400 },
+      )
+    }
+
     // Pickup goes to its own columns. It is no longer folded into wantedItems,
     // which is now the free text it was always named for.
     const hasPickup =
@@ -89,7 +113,7 @@ export async function POST(req: NextRequest) {
         description: body.description || resolvedTitle,
         category: body.category,
         condition: body.condition,
-        valueLeaves: body.valueLeaves ?? null,
+        ...valued.data,
         wantedItems: body.wantedItems ?? null,
         images: JSON.stringify(body.images ?? []),
         userId: session.user.id,

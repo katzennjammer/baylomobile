@@ -1,120 +1,121 @@
 import { NextRequest, NextResponse } from "next/server"
 import { resolveSession } from "@/lib/api-auth"
-import prisma from "@/lib/prisma"
+import { categoryLabel, conditionLabel } from "@/lib/v1/taxonomy"
+import { categorySchema, conditionSchema } from "@/lib/validation"
+import { valuate } from "@/lib/valuation-server"
+import { valueItem, BAND_REFERENCE_CONDITION } from "@/lib/valuation"
 
-// Typical second-hand value bands, expressed in Pasa Leaves.
-// Leaves are a non-monetary trade unit — these are relative worth, not prices.
-// This table is the SINGLE source of truth for value bands; clients read it
-// through this endpoint and must not keep their own copy.
-const VALUE_BANDS: Record<string, [number, number]> = {
-  ELECTRONICS:  [100, 4000],  CLOTHING:   [30, 600],   BAGS:     [40, 1600],
-  BEAUTY:       [20, 1000],   ACCESSORIES:[40, 2000],  FURNITURE:[100, 3000],
-  BOOKS:        [15, 200],    GAMING:     [100, 4000], SPORTS:   [60, 3000],
-  BIKES:        [200, 6000],  TOYS:       [20, 600],   TOOLS:    [40, 2000],
-  MUSIC:        [100, 6000],  ART:        [40, 1000],  COLLECTIBLES:[20, 2000],
-  PETS:         [20, 600],    PLANTS:     [20, 400],   FOOD:     [10, 100],
-  SERVICES:     [100, 2000],  OTHER:      [20, 1000],
-}
+/**
+ * DEPRECATED. Use GET /api/v1/valuation.
+ *
+ * This path is a lie about what the code does and it is kept only so that
+ * anything already pointed at it keeps working. There is no AI here and there
+ * never was: the handler that used to live at this path imported Prisma and a
+ * number formatter, and every valuation the product ever advertised as an AI
+ * scan was this — a category lookup with a spinner in front of it.
+ *
+ * The model now lives in @/lib/valuation and the endpoint that owns it is
+ * /api/v1/valuation, outside /api/ai/ where it belongs. What remains here is a
+ * translation layer: same library, same numbers, old response shape. It holds
+ * no tables and makes no decisions, so it cannot drift from the real endpoint
+ * the way the old duplicated band tables did.
+ *
+ * Two differences from the real endpoint, both consequences of the old shape:
+ *
+ *   - `condition` is optional. Callers written against the old contract do not
+ *     send it, and 400-ing them would be breaking the compatibility this file
+ *     exists to provide. Omitted, it is treated as GOOD — the condition the
+ *     category bands are expressed in, so the result is the un-adjusted band
+ *     figure the old handler returned.
+ *   - `source` keeps its old vocabulary ("baylo_trades" / "category_average")
+ *     rather than the stored valuationSource values. A shipped client may be
+ *     branching on those strings.
+ *
+ * When the web client is the only caller left and it is on v1, delete this file.
+ */
 
-const FALLBACK_BAND: [number, number] = [1, 40]
-
-const CATEGORY_LABELS: Record<string, string> = {
-  ELECTRONICS: "Electronics",  CLOTHING: "Clothing",      BAGS: "Bags",
-  BEAUTY: "Beauty",            ACCESSORIES: "Accessories", FURNITURE: "Furniture",
-  BOOKS: "Books & Media",      GAMING: "Gaming",           SPORTS: "Sports",
-  BIKES: "Bikes",              TOYS: "Toys & Kids",        TOOLS: "Tools",
-  MUSIC: "Music",              ART: "Art & Crafts",        COLLECTIBLES: "Collectibles",
-  PETS: "Pets",                PLANTS: "Plants",           FOOD: "Food",
-  SERVICES: "Services",        OTHER: "Other",
-}
-
-const fmt = (n: number) => Math.round(n).toLocaleString("en-US")
+/** Old-vocabulary source strings. Not what is stored on the Item. */
+const LEGACY_SOURCE = {
+  comparables: "baylo_trades",
+  category_band: "category_average",
+} as const
 
 export async function GET(req: NextRequest) {
   const session = await resolveSession()
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const category = new URL(req.url).searchParams.get("category") ?? "OTHER"
-  const label = CATEGORY_LABELS[category] ?? category
-  const band = VALUE_BANDS[category] ?? FALLBACK_BAND
+  const params = new URL(req.url).searchParams
 
-  const categoryComparable = {
-    label:    `Typical ${label} value`,
-    sublabel: "Category average",
-    leaves:   `${fmt(band[0])} – ${fmt(band[1])} Leaves`,
-  }
+  // An unknown category resolves to OTHER rather than 400-ing, which is what
+  // the old handler did (`?? "OTHER"` on a missing param, and an unchecked
+  // lookup with a fallback band on a bogus one). v1 rejects both; this does not.
+  const categoryParsed = categorySchema.safeParse(params.get("category"))
+  const category = categoryParsed.success ? categoryParsed.data : "OTHER"
+
+  const conditionParsed = conditionSchema.safeParse(params.get("condition"))
+  const condition = conditionParsed.success ? conditionParsed.data : BAND_REFERENCE_CONDITION
+
+  const label = categoryLabel(category)
+  const fmt = (n: number) => Math.round(n).toLocaleString("en-US")
+
+  // The range this endpoint reports is condition-adjusted, so the caption has
+  // to name the item's condition and not the band's reference one.
+  const bandSublabel = (c: string) =>
+    c === BAND_REFERENCE_CONDITION
+      ? `Category band · ${conditionLabel(c)} condition`
+      : `Category band · adjusted for ${conditionLabel(c).toLowerCase()} condition`
 
   try {
-    // Comparables must come from items that actually changed hands. Settlement
-    // reassigns Item.userId and sets status OWNED (see trades/[id]/confirm/submit),
-    // so OWNED already means "acquired through a settled trade"; TRADED describes
-    // a relationship the row no longer has. Filtering on TRADED alone therefore
-    // matched almost nothing and every request fell through to the VALUE_BANDS
-    // category estimate below.
-    //
-    // TRADED is included as LEGACY ONLY. No code path writes it any more — the
-    // two rows that still carry it ("Coco", OTHER, 20 Leaves and "Bike", SPORTS,
-    // 32 Leaves) were settled on 2026-07-04, before the OWNED convention. They
-    // are genuinely settled items and this dataset is far too small to discard
-    // real comparables. Nothing new will ever enter this branch through TRADED.
-    // (Note: dashboard/trades/TradesClient.tsx does set "TRADED" optimistically
-    // in local UI state, but never persists it.)
-    //
-    // Switched from TRADED-only to OWNED + TRADED on 2026-08-25. That date is the
-    // boundary: before it this endpoint always returned category bands; from it,
-    // any category with >= 3 settled priced items returns real Baylo comparables
-    // instead. As of that date no category has reached 3 yet, so the statistical
-    // branch is armed rather than active. If the valuation numbers move, this is
-    // when and why.
-    const settled = await prisma.item.findMany({
-      where: {
-        category: category as never,
-        status: { in: ["OWNED", "TRADED"] },
-        valueLeaves: { not: null },
-      },
-      select: { valueLeaves: true },
-      take: 100,
+    const v = await valuate(category, condition)
+
+    const comparables: { label: string; sublabel: string; leaves: string }[] = []
+    if (v.valuationSource === "comparables") {
+      comparables.push({
+        label: `Recent ${label} swaps`,
+        sublabel: `Baylo · ${label} · ${v.sampleSize} completed trade${v.sampleSize === 1 ? "" : "s"}, adjusted for condition`,
+        leaves: `~${fmt(v.suggestedLeaves)} Leaves`,
+      })
+    }
+    comparables.push({
+      label: `Typical ${label} value`,
+      sublabel: bandSublabel(condition),
+      leaves: `${fmt(v.min)} – ${fmt(v.max)} Leaves`,
     })
 
-    const values = settled.map(i => i.valueLeaves!).filter(v => v > 0)
-    const comparables: { label: string; sublabel: string; leaves: string }[] = []
-
-    let min: number, max: number, midpoint: number
-    let source: string
-
-    if (values.length >= 3) {
-      min      = Math.min(...values)
-      max      = Math.max(...values)
-      midpoint = values.reduce((a, b) => a + b, 0) / values.length
-      source   = "baylo_trades"
-      comparables.push({
-        label:    `Recent ${label} swaps`,
-        sublabel: `Baylo · ${label} · ${values.length} completed trade${values.length !== 1 ? "s" : ""}`,
-        leaves:   `~${fmt(midpoint)} Leaves avg`,
-      })
-    } else {
-      min      = band[0]
-      max      = band[1]
-      midpoint = (band[0] + band[1]) / 2
-      source   = "category_average"
-    }
-
-    comparables.push(categoryComparable)
-
     return NextResponse.json({
-      min:      Math.round(min),
-      max:      Math.round(max),
-      midpoint: Math.round(midpoint),
+      min: v.min,
+      max: v.max,
+      // The old field name. It always meant "the number to pre-fill", which is
+      // the suggestion; it was the band's arithmetic midpoint only because
+      // nothing adjusted it. Both are sent so a caller can move over without a
+      // flag day.
+      midpoint: v.suggestedLeaves,
+      suggestedLeaves: v.suggestedLeaves,
+      allowed: v.allowed,
+      valuationSource: v.valuationSource,
       comparables,
-      source,
+      source: LEGACY_SOURCE[v.valuationSource],
+      deprecated: "Use GET /api/v1/valuation",
     })
   } catch {
+    // The old handler swallowed a DB failure into a band-only response. That
+    // behaviour is kept: the band path needs no database, so a valuation is
+    // still correct and still labelled with the path that produced it.
+    const v = valueItem({ category, condition, comparables: [] })
     return NextResponse.json({
-      min:      band[0],
-      max:      band[1],
-      midpoint: Math.round((band[0] + band[1]) / 2),
-      comparables: [categoryComparable],
-      source: "category_average",
+      min: v.min,
+      max: v.max,
+      midpoint: v.suggestedLeaves,
+      suggestedLeaves: v.suggestedLeaves,
+      allowed: v.allowed,
+      valuationSource: v.valuationSource,
+      comparables: [{
+        label: `Typical ${label} value`,
+        sublabel: bandSublabel(condition),
+        leaves: `${fmt(v.min)} – ${fmt(v.max)} Leaves`,
+      }],
+      source: LEGACY_SOURCE[v.valuationSource],
+      deprecated: "Use GET /api/v1/valuation",
     })
   }
 }

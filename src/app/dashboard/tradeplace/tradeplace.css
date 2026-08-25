@@ -1448,6 +1448,32 @@
   display: flex; align-items: center; gap: 5px;
 }
 .pw2-est-header span:last-child { font-size: 11.5px; color: #6B7280; }
+
+/* The "how was this calculated?" affordance on the suggested-value panel.
+   A real button, not a hover-only title attribute: the explanation of where a
+   listing's value came from has to be reachable by keyboard and on touch, and
+   a title tooltip is neither. */
+.pw2-info-btn {
+  width: 15px; height: 15px; flex: none;
+  border-radius: 999px; border: 1px solid #A5D6A7;
+  background: #fff; color: #4CAF50;
+  font-size: 10px; font-weight: 800; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0;
+}
+.pw2-info-btn:hover { background: #E8F5E9; }
+.pw2-info-btn:focus-visible { outline: 2px solid #4CAF50; outline-offset: 1px; }
+
+/* The explanation itself. Sentence case and normal letter-spacing: it inherits
+   from the uppercase tracked header otherwise, and a paragraph set in tracked
+   caps is unreadable. */
+.pw2-basis {
+  font-size: 12px; line-height: 1.5; color: #33691E;
+  background: rgba(255,255,255,.7);
+  border: 1px solid #C8E6C9; border-radius: 10px;
+  padding: 9px 11px; margin: 0 0 4px;
+  text-transform: none; letter-spacing: normal; font-weight: 400;
+}
 .pw2-est-range {
   display: flex; align-items: center; gap: 0; position: relative; margin: 8px 0 4px;
 }

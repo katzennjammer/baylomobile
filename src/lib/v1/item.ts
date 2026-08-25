@@ -36,6 +36,8 @@ export const V1_ITEM_SELECT = {
   category: true,
   condition: true,
   valueLeaves: true,
+  suggestedLeaves: true,
+  valuationSource: true,
   status: true,
   wantedItems: true, // read only to produce `wanted`; never emitted under this name
   imageHash: true,
@@ -92,6 +94,10 @@ export interface V1Item {
   condition: string
   conditionLabel: string
   valueLeaves: number | null
+  /** The model's number before the owner adjusted it. NULL predates the model. */
+  suggestedLeaves: number | null
+  /** "comparables" | "category_band" | null for pre-model listings. */
+  valuationSource: string | null
   status: string
   wanted: string | null
   pickup: PublicPickup | null
@@ -124,6 +130,8 @@ export interface V1ItemRow {
   category: string
   condition: string
   valueLeaves: number | null
+  suggestedLeaves: number | null
+  valuationSource: string | null
   status: string
   wantedItems: string | null
   createdAt: Date
@@ -166,6 +174,8 @@ export function v1Item(
     condition: row.condition,
     conditionLabel: conditionLabel(row.condition),
     valueLeaves: row.valueLeaves,
+    suggestedLeaves: row.suggestedLeaves,
+    valuationSource: row.valuationSource,
     status: row.status,
     wanted: row.wantedItems ?? null,
     pickup: resolvePickup(row, viewerId, tradeAccessIds),

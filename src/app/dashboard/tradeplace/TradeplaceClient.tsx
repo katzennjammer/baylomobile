@@ -157,6 +157,15 @@ export interface SerializedItem {
   category: string;
   condition: string;
   valueLeaves: number | null;
+  /**
+   * The valuation model's number, before the owner adjusted it, and which of
+   * the two paths produced it. Null on listings that predate the model. Both
+   * are optional here because the tradeplace page maps its own row shape and
+   * does not carry them yet — nothing on this screen reads them, and typing
+   * them as required would be a lie about what that mapping supplies.
+   */
+  suggestedLeaves?: number | null;
+  valuationSource?: string | null;
   /** Free text only. Pickup is a separate, server-filtered field. */
   wanted: string | null;
   /**
