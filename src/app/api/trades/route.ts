@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import pusher from "@/lib/pusher"
 import { ITEM_PUBLIC_SELECT, preciseAccessItemIds, shapeItem } from "@/lib/item-visibility"
 import { parseBody, createTradeSchema, tradeStatusSchema } from "@/lib/validation"
+import { enforceInitiateTrade, enforceAcceptTrade } from "@/lib/reputation-gate"
 
 export async function GET() {
   try {
@@ -71,6 +72,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Item is not available for trade" }, { status: 400 })
     }
 
+    // ── Reputation gates ──
+    //
+    // INITIATING. Two checks: an unfulfilled deferred agreement blocks starting
+    // a trade at all, and the caller's tier caps the value of what they may
+    // trade FOR -- requestedItem, the one they would receive, never
+    // offeredItem, which is already theirs.
+    //
+    // Server-side and here rather than in the wizard. The listing page will
+    // also hide the button, and that hiding is a courtesy: this check is what
+    // makes the limit real, and it must keep holding for a caller who never
+    // loaded the page.
+    const gate = await enforceInitiateTrade(session.user.id, [requestedItemId])
+    if (gate.response) return gate.response
+
     const existing = await prisma.tradeRequest.findFirst({
       where: {
         senderId: session.user.id,
@@ -133,6 +148,14 @@ export async function PATCH(req: NextRequest) {
     if (trade.receiverId !== myId) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     if (status === "ACCEPTED") {
+      // ── Reputation gate, ACCEPT path ──
+      //
+      // The value ceiling applies -- the receiver is acquiring offeredItem --
+      // but the defaulted-trader block deliberately does NOT. Accepting is how
+      // a defaulter earns their way out; see enforceCanInitiateTrade().
+      const gate = await enforceAcceptTrade(myId, [trade.offeredItemId])
+      if (gate.response) return gate.response
+
       // Server-side guard: items must not be TRADED before we commit them
       if (trade.offeredItem.status === "TRADED" || trade.requestedItem.status === "TRADED") {
         return NextResponse.json({ error: "Item is no longer available" }, { status: 409 })

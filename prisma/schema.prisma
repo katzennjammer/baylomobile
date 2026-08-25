@@ -8,17 +8,17 @@ datasource db {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  name        String
-  email       String   @unique
-  password    String?
+  id       String  @id @default(cuid())
+  name     String
+  email    String  @unique
+  password String?
 
   // Account verification. This flag — never "password is null" — is what
   // "verified" means. Google sign-in (web callback and native token exchange)
   // sets it; phone OTP will set this same flag when it lands, and nothing
   // downstream will need to change. Flipping it false -> true is what triggers
   // the VERIFY_ACCOUNT award and the one-time signup grant; see markVerified().
-  isVerified  Boolean  @default(false)
+  isVerified Boolean @default(false)
 
   // One-time signup grant (SIGNUP_GRANT_LEAVES), claimed at verification, never
   // at registration — an ungated grant lets an attacker mint Leaves by mass-
@@ -44,38 +44,47 @@ model User {
   //
   // Non-null means gone: resolveSession() refuses these accounts, so an access
   // token issued before deletion stops working immediately.
-  deletedAt   DateTime?
+  deletedAt DateTime?
 
-  items            Item[]
-  sentRequests     TradeRequest[] @relation("SentRequests")
-  receivedRequests TradeRequest[] @relation("ReceivedRequests")
-  sentMessages     Message[]      @relation("SentMessages")
-  receivedMessages Message[]      @relation("ReceivedMessages")
-  notifications         Notification[] @relation("NotificationRecipient")
-  triggeredNotifications Notification[] @relation("NotificationActor")
-  reviewsGiven     Review[]       @relation("ReviewsGiven")
-  reviewsReceived  Review[]       @relation("ReviewsReceived")
-  following        Follow[]       @relation("Follower")
-  followers        Follow[]       @relation("Followee")
-  postLikes        PostLike[]     @relation("UserPostLikes")
-  postComments     PostComment[]  @relation("UserPostComments")
-  commentLikes     CommentLike[]  @relation("UserCommentLikes")
-  sentOffers            Offer[]                @relation("SentOffers")
-  receivedOffers        Offer[]                @relation("ReceivedOffers")
-  leaves                Int                    @default(0)
-  lifetimeLeaves        Int                    @default(0)
-  leafTransactions      LeafTransaction[]
-  swapConfirmationCodes SwapConfirmationCode[]
-  taskCompletions       TaskCompletion[]
-  refreshTokens         RefreshToken[]
+  items                   Item[]
+  sentRequests            TradeRequest[]           @relation("SentRequests")
+  receivedRequests        TradeRequest[]           @relation("ReceivedRequests")
+  sentMessages            Message[]                @relation("SentMessages")
+  receivedMessages        Message[]                @relation("ReceivedMessages")
+  notifications           Notification[]           @relation("NotificationRecipient")
+  triggeredNotifications  Notification[]           @relation("NotificationActor")
+  reviewsGiven            Review[]                 @relation("ReviewsGiven")
+  reviewsReceived         Review[]                 @relation("ReviewsReceived")
+  following               Follow[]                 @relation("Follower")
+  followers               Follow[]                 @relation("Followee")
+  postLikes               PostLike[]               @relation("UserPostLikes")
+  postComments            PostComment[]            @relation("UserPostComments")
+  commentLikes            CommentLike[]            @relation("UserCommentLikes")
+  sentOffers              Offer[]                  @relation("SentOffers")
+  receivedOffers          Offer[]                  @relation("ReceivedOffers")
+  leaves                  Int                      @default(0)
+  lifetimeLeaves          Int                      @default(0)
+  leafTransactions        LeafTransaction[]
+  swapConfirmationCodes   SwapConfirmationCode[]
+  taskCompletions         TaskCompletion[]
+  refreshTokens           RefreshToken[]
   emailVerificationTokens EmailVerificationToken[]
+
+  // Deferred Points Agreements. No denormalised default counter and no
+  // defaulted flag on this row on purpose: both are derived from these two
+  // relations at read time. A stored counter is one more thing that can drift
+  // out of step with the rows it summarises -- totalTrades above already has,
+  // sitting one and two above the real COMPLETED trade count for two users --
+  // and a derived penalty is one that a lazy deadline sweep cannot apply twice.
+  contractsAsDebtor   DeferredContract[] @relation("ContractDebtor")
+  contractsAsCreditor DeferredContract[] @relation("ContractCreditor")
 }
 
 model Follow {
-  id         String       @id @default(cuid())
-  status     FollowStatus @default(PENDING)
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id        String       @id @default(cuid())
+  status    FollowStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   followerId String
   follower   User   @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
@@ -153,14 +162,14 @@ model EmailVerificationToken {
 }
 
 model Item {
-  id             String     @id @default(cuid())
-  title          String
-  description    String     @db.Text
-  images         String     @db.Text
-  category       Category
-  condition      Condition
-  valueLeaves    Int?
-  status         ItemStatus @default(AVAILABLE)
+  id          String     @id @default(cuid())
+  title       String
+  description String     @db.Text
+  images      String     @db.Text
+  category    Category
+  condition   Condition
+  valueLeaves Int?
+  status      ItemStatus @default(AVAILABLE)
 
   // Free text only: what the owner wants in return. This column used to double
   // as a JSON envelope carrying the pickup coordinates, which is how a home
@@ -168,28 +177,28 @@ model Item {
   // "wanted items" is not somewhere anyone thinks to look for location data.
   // Pickup now lives in the three explicit columns below and is filtered by
   // resolvePickup() in @/lib/item-visibility on every read path.
-  wantedItems    String?    @db.Text
+  wantedItems String? @db.Text
 
   // Exact pickup point. NEVER serialise these straight onto a response: full
   // precision plus pickupAddress identifies a seller's home. Only the owner and
   // an accepted trade counterparty may see them; everyone else gets the
   // 2-decimal-place (~1 km) rounding that resolvePickup() applies.
-  pickupLat      Float?
-  pickupLng      Float?
-  pickupAddress  String?    @db.Text
+  pickupLat     Float?
+  pickupLng     Float?
+  pickupAddress String? @db.Text
 
-  imageHash      String?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  imageHash String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   offeredIn   TradeRequest[] @relation("OfferedItem")
   requestedIn TradeRequest[] @relation("RequestedItem")
-  likes        PostLike[]     @relation("ItemPostLikes")
-  comments     PostComment[]  @relation("ItemPostComments")
-  offers       Offer[]        @relation("ItemOffers")
+  likes       PostLike[]     @relation("ItemPostLikes")
+  comments    PostComment[]  @relation("ItemPostComments")
+  offers      Offer[]        @relation("ItemOffers")
 }
 
 model TradeRequest {
@@ -223,11 +232,12 @@ model TradeRequest {
   // Settlement resolved that with findFirst() and no orderBy, so the amount it
   // debited was whichever row the optimiser returned. Settlement is the one
   // code path that moves currency; it does not get to guess.
-  offeredLeaves   Int?
+  offeredLeaves Int?
 
   messages              Message[]
   reviews               Review[]
   swapConfirmationCodes SwapConfirmationCode[]
+  deferredContracts     DeferredContract[]
 }
 
 model Message {
@@ -317,7 +327,6 @@ model Review {
   @@unique([tradeId, reviewerId])
 }
 
-
 // Task reward system: one row per completed task.
 // One-time tasks use refId "" (MySQL treats NULLs as distinct in unique
 // indexes, so an empty-string default is what enforces once-per-user);
@@ -346,13 +355,13 @@ enum TaskKind {
 }
 
 model SwapConfirmationCode {
-  id        String       @id @default(cuid())
-  tradeId   String
-  trade     TradeRequest @relation(fields: [tradeId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  codeHash  String
-  used      Boolean      @default(false)
+  id       String       @id @default(cuid())
+  tradeId  String
+  trade    TradeRequest @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash String
+  used     Boolean      @default(false)
 
   // Wrong guesses against THIS code. A 6-digit code is a 1-in-a-million secret
   // only while the number of guesses is bounded; unbounded, a trade participant
@@ -360,10 +369,10 @@ model SwapConfirmationCode {
   // without ever meeting — which is exactly what the VERIFIED_SWAP and
   // SAFEZONE_MEETUP Leaf awards are paid for. At MAX_CODE_ATTEMPTS the code is
   // burned and both parties have to restart.
-  attempts  Int          @default(0)
+  attempts Int @default(0)
 
   expiresAt DateTime
-  createdAt DateTime     @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([tradeId, userId])
 }
@@ -496,6 +505,12 @@ enum LeafTxType {
   TRADE_RECEIVE
   TASK_REWARD
   SIGNUP_GRANT
+  // Deferred Points Agreement settlement. Always written as a PAIR in one
+  // transaction -- CONTRACT_PAY on the debtor for -n, CONTRACT_COLLECT on the
+  // creditor for +n -- so the pair nets to zero and
+  // SUM(User.leaves) == SUM(LeafTransaction.amount) survives every payment.
+  CONTRACT_PAY
+  CONTRACT_COLLECT
 }
 
 // Each row is one atomic Leaf movement (credit or debit).
@@ -519,17 +534,100 @@ model LeafTransaction {
   userId      String
   user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   type        LeafTxType
-  amount      Int        // positive = credit, negative = debit (in Pasa Leaves)
+  amount      Int // positive = credit, negative = debit (in Pasa Leaves)
   description String
 
   // Optional references to the trade/offer that caused this debit/credit
-  offerId     String?
-  tradeId     String?
+  offerId    String?
+  tradeId    String?
+  // The DeferredContract this row paid down, for CONTRACT_PAY / CONTRACT_COLLECT.
+  // A plain column rather than a relation, matching offerId and tradeId above:
+  // the ledger points at things, nothing points back at the ledger.
+  contractId String?
 
-  createdAt   DateTime   @default(now())
-  eventAt     DateTime
+  createdAt DateTime @default(now())
+  eventAt   DateTime
 
   @@index([userId])
   @@index([userId, createdAt])
   @@index([userId, eventAt])
+}
+
+// ── Deferred Points Agreement ────────────────────────────────────────────────
+//
+// Two items are unequal in value. The party receiving the more valuable one
+// agrees to owe the difference in Leaves and to settle it by a deadline.
+//
+// WHAT THIS MODEL DELIBERATELY CANNOT EXPRESS: getting the item back. There is
+// no reversal state, no repossession field, no return flag. The item physically
+// changed hands at a meetup and the system has no mechanism that could recover
+// it — a status called RETURNED would be a lie the database told about the
+// world. Every consequence of a default here is reputational (tier demotion,
+// a public count) or access-based (blocked from initiating trades).
+//
+// DEBT SURVIVES DEFAULT. `status = DEFAULTED` does not zero amountPaidLeaves or
+// close the contract: the remainder stays owed and auto-payment keeps applying
+// to it. If defaulting wiped the balance, defaulting would be the cheap way to
+// pay, and the deadline would be a suggestion.
+model DeferredContract {
+  id      String       @id @default(cuid())
+  tradeId String
+  trade   TradeRequest @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  // The debtor is always the PROPOSER. A contract is a promise to pay, and the
+  // only person who can make it is the person who will owe it; the creditor's
+  // half of the bargain is consent, which is what PENDING_ACCEPT is for.
+  debtorId   String
+  debtor     User   @relation("ContractDebtor", fields: [debtorId], references: [id], onDelete: Cascade)
+  creditorId String
+  creditor   User   @relation("ContractCreditor", fields: [creditorId], references: [id], onDelete: Cascade)
+
+  /**
+   * Principal. Never mutated after acceptance — payment moves amountPaidLeaves.
+   */
+  amountLeaves     Int
+  /**
+   * Paid so far. Two columns rather than a decrementing balance so that the
+   * original size of the promise stays legible on a half-paid contract.
+   */
+  amountPaidLeaves Int @default(0)
+
+  deadline DateTime
+  status   ContractStatus @default(PENDING_ACCEPT)
+
+  // Exactly one extension, and only if the creditor grants it. The request and
+  // the grant are separate columns because they are separate acts by separate
+  // people: a debtor asking is not a deadline moving.
+  extensionUsed              Boolean   @default(false)
+  extensionRequestedAt       DateTime?
+  extensionRequestedDeadline DateTime?
+
+  createdAt   DateTime  @default(now())
+  acceptedAt  DateTime?
+  fulfilledAt DateTime?
+  // Stamped by the deadline sweep, and NEVER cleared — not even when a
+  // defaulted contract is later paid off in full and moves to FULFILLED. This
+  // column, not `status`, is what "past defaults" counts and what the tier
+  // demotion is derived from. Paying late settles the debt, not the record.
+  defaultedAt DateTime?
+
+  // The debtor's exposure checks and the concurrency check both filter on
+  // (debtorId, status); the creditor's list filters on (creditorId, status);
+  // the lazy sweep filters on (status, deadline).
+  @@index([debtorId, status])
+  @@index([creditorId, status])
+  @@index([status, deadline])
+  @@index([tradeId])
+}
+
+enum ContractStatus {
+  PENDING_ACCEPT
+  ACTIVE
+  FULFILLED
+  DEFAULTED
+  // Not in the original four. A creditor who refuses a proposal produces a row
+  // that is neither fulfilled nor defaulted, and deleting it would erase the
+  // one fact the preview screen exists to surface — that someone looked at this
+  // debtor's numbers and said no. See the note in the change report.
+  DECLINED
 }

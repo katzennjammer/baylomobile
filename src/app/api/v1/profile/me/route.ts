@@ -11,6 +11,7 @@ import { parseQuery, paginationShape } from "@/lib/v1/query"
 import { decodeCursor, encodeCursor, olderThan, paginate } from "@/lib/v1/cursor"
 import { V1_ITEM_SELECT, V1_ITEM_OWNER_SELECT, v1ItemStatsSelect, v1Item, type V1ItemRow } from "@/lib/v1/item"
 import { taskLabel } from "@/lib/v1/taxonomy"
+import { loadStanding, publicStanding } from "@/lib/reputation-gate"
 
 export const dynamic = "force-dynamic"
 
@@ -122,6 +123,20 @@ export async function GET(req: NextRequest) {
     select: { task: true, leaves: true },
   })
 
+  // ── 7 ── the viewer's trust tier and what it permits.
+  //
+  // Served so the client can grey out what is locked AND SAY WHY, rather than
+  // guessing at the thresholds or discovering them from a 403 after the user
+  // has filled in a form. Everything here is advisory: the same numbers are
+  // re-derived server-side on every attempt by @/lib/reputation-gate, and
+  // nothing a client sends about its own tier is ever read back.
+  //
+  // Costs four more queries (loadStanding runs the lazy default sweep, then
+  // reads the rating, the trade count and two contract sets). Counted honestly
+  // rather than folded into the six above: the header comment on this route
+  // says SIX queries, and it is now SIX PLUS FOUR.
+  const standing = await loadStanding(viewerId)
+
   // Impact. computeImpactData() returns everything except the two derived
   // figures, which are computed here from the same trade set — no extra query.
   const base = computeImpactData(viewerId, trades)
@@ -185,6 +200,8 @@ export async function GET(req: NextRequest) {
           }
         }),
       },
+      // The tier, its limits, and the DPA state the limits govern.
+      reputation: publicStanding(standing),
       impact: {
         co2Avoided: Math.round(base.co2Avoided * 10) / 10,
         waterSaved: Math.round(base.waterSaved),

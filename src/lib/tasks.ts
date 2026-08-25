@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/generated/prisma/client"
 import prisma from "@/lib/prisma"
+import { applyEarningsToContracts } from "@/lib/contracts"
 import {
   TASK_REWARDS,
   TASK_ORDER,
@@ -196,6 +197,13 @@ export async function awardTask(
 /**
  * Fire-and-forget wrapper for award sites that must never affect the response.
  * Runs its own transaction so the award stays atomic.
+ *
+ * Also sweeps the awarded Leaves into any open Deferred Points Agreement, in
+ * the SAME transaction as the award. That is rule 4 -- a debtor settles by
+ * earning, and earned Leaves reach the debt before they reach the balance the
+ * debtor can spend. The settlement path does its own sweep after its awards
+ * instead of relying on this one, because it credits Leaves through the trade
+ * as well and wants a single sweep covering both.
  */
 export function awardTaskAsync(
   userId: string,
@@ -204,7 +212,11 @@ export function awardTaskAsync(
   opts: { partnerId?: string; tradeId?: string; description?: string; tradeAt?: Date; eventAt?: Date } = {},
 ): void {
   void prisma
-    .$transaction((tx) => awardTask(tx as TaskDb, userId, task, refId, opts))
+    .$transaction(async (tx) => {
+      const res = await awardTask(tx as TaskDb, userId, task, refId, opts)
+      if (res.awarded > 0) await applyEarningsToContracts(tx, userId)
+      return res
+    })
     .catch(() => { /* awards are best-effort; the backfill catches misses */ })
 }
 

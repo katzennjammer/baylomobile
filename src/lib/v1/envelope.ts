@@ -33,6 +33,12 @@ export type ApiErrorCode =
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
   | "NOT_FOUND"
+  // The request was understood and the caller is allowed, but the target is in
+  // the wrong state for it -- a contract already accepted, a second extension
+  // on a contract that has had one. Distinct from VALIDATION_ERROR, which means
+  // the request itself was malformed: retrying a 409 with the identical body
+  // may succeed later, retrying a 400 never will.
+  | "CONFLICT"
   | "RATE_LIMITED"
   | "INTERNAL_ERROR"
 
@@ -41,6 +47,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   UNAUTHENTICATED:  401,
   FORBIDDEN:        403,
   NOT_FOUND:        404,
+  CONFLICT:         409,
   RATE_LIMITED:     429,
   INTERNAL_ERROR:   500,
 }
@@ -79,3 +86,11 @@ export const notFound = (what = "Not found") => fail("NOT_FOUND", what)
 
 /** 400 with a human-readable reason. */
 export const invalid = (message: string) => fail("VALIDATION_ERROR", message)
+
+/** 403. The caller is who they say they are and still may not do this. */
+export const forbidden = (message: string, meta: Record<string, unknown> = {}) =>
+  fail("FORBIDDEN", message, meta)
+
+/** 409. Right caller, right request, wrong state. */
+export const conflict = (message: string, meta: Record<string, unknown> = {}) =>
+  fail("CONFLICT", message, meta)

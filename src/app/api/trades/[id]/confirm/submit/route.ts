@@ -7,6 +7,7 @@ import { awardTask } from "@/lib/tasks"
 import { MAX_CODE_ATTEMPTS } from "@/lib/swap-code"
 import { confirmSubmitSchema, parseBody } from "@/lib/validation"
 import { enforceRateLimit } from "@/lib/rate-limit-config"
+import { applyEarningsToContracts } from "@/lib/contracts"
 
 export async function POST(
   req: NextRequest,
@@ -143,6 +144,22 @@ export async function POST(
         })
         if (freshTrade?.status === "COMPLETED") throw new Error("already_completed")
 
+        // RULE 3 -- CREDITOR CONSENT. A trade carrying a deferred agreement
+        // that the creditor has not accepted does not finalize. This check,
+        // not the accept endpoint, is what makes that true: the accept
+        // endpoint only flips a status, whereas this is the statement that
+        // refuses to hand the items over while consent is outstanding.
+        //
+        // Only PENDING_ACCEPT blocks. An ACTIVE contract is exactly the case
+        // the feature exists for -- the item changes hands now, the Leaves are
+        // owed later -- and DECLINED means the parties settled it some other
+        // way.
+        const pendingContract = await tx.deferredContract.findFirst({
+          where:  { tradeId, status: "PENDING_ACCEPT" },
+          select: { id: true },
+        })
+        if (pendingContract) throw new Error("contract_pending")
+
         const freshItems = await tx.item.findMany({
           where:  { id: { in: itemIds } },
           select: { id: true, status: true },
@@ -242,10 +259,34 @@ export async function POST(
             })
           }
         }
+
+        // RULE 4 -- FULFILMENT. Leaves that just landed in a debtor's balance
+        // go to their oldest open deferred agreement before they go anywhere
+        // else. Both parties are swept: the receiver was credited above, and
+        // BOTH may have collected task rewards.
+        //
+        // Inside the settlement transaction on purpose. Every payment writes a
+        // CONTRACT_PAY/CONTRACT_COLLECT ledger pair and moves both balances in
+        // the same commit as the credit that funded it, so
+        // SUM(User.leaves) == SUM(LeafTransaction.amount) is never observably
+        // broken -- not even for the instant between earning and paying.
+        //
+        // Runs AFTER awardTask so the sweep sees the task Leaves too; awardTask
+        // deliberately does not sweep on its own here, which would have swept
+        // twice for no benefit.
+        for (const uid of [trade.senderId, trade.receiverId]) {
+          await applyEarningsToContracts(tx, uid)
+        }
       })
     } catch (txErr) {
       if (txErr instanceof Error && txErr.message === "already_completed") {
         return NextResponse.json({ correct: true, completed: true })
+      }
+      if (txErr instanceof Error && txErr.message === "contract_pending") {
+        return NextResponse.json(
+          { error: "This trade has a deferred points agreement your partner has not accepted yet. It cannot be completed until they accept or decline it." },
+          { status: 409 },
+        )
       }
       if (txErr instanceof Error && txErr.message === "item_traded") {
         return NextResponse.json({ error: "An item in this trade is no longer available" }, { status: 409 })

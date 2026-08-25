@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import pusher from "@/lib/pusher"
 import { availableLeaves } from "@/lib/leaves"
 import { createOfferSchema, parseBody } from "@/lib/validation"
+import { enforceInitiateTrade } from "@/lib/reputation-gate"
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,6 +26,15 @@ export async function POST(req: NextRequest) {
     if (post.userId === session.user.id) {
       return NextResponse.json({ error: "Cannot make an offer on your own post" }, { status: 400 })
     }
+
+    // ── Reputation gates, INITIATING path ──
+    //
+    // Making an offer is starting a trade, so both gates apply: a standing
+    // default blocks it outright, and the tier ceiling caps `post` -- the item
+    // the offerer would RECEIVE. The items they are putting up are their own
+    // and are not capped.
+    const gate = await enforceInitiateTrade(session.user.id, [postId])
+    if (gate.response) return gate.response
 
     if (offeredLeaves && offeredLeaves > 0) {
       const available = await availableLeaves(prisma, session.user.id)

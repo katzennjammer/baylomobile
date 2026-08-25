@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma"
 import { SIGNUP_GRANT_LEAVES } from "@/lib/task-constants"
 import { awardTask } from "@/lib/tasks"
+import { applyEarningsToContracts } from "@/lib/contracts"
 import type { PrismaClient } from "@/generated/prisma/client"
 
 type TaskDb = Pick<PrismaClient, "user" | "taskCompletion" | "leafTransaction" | "tradeRequest">
@@ -61,12 +62,17 @@ export async function markVerified(
   //    use when backfilling an account that verified before this code existed.
   let taskAwarded = 0
   try {
-    const res = await prisma.$transaction((tx) =>
-      awardTask(tx as TaskDb, userId, "VERIFY_ACCOUNT", "", {
+    const res = await prisma.$transaction(async (tx) => {
+      const awarded = await awardTask(tx as TaskDb, userId, "VERIFY_ACCOUNT", "", {
         description: "Task reward: verified your account",
         eventAt: at,
-      }),
-    )
+      })
+      // Earned Leaves go to an open deferred agreement first — rule 4. In the
+      // same transaction as the award, so the balance and the debt never
+      // disagree between two commits.
+      if (awarded.awarded > 0) await applyEarningsToContracts(tx, userId)
+      return awarded
+    })
     taskAwarded = res.awarded
   } catch {
     // Best-effort, exactly like every other award site: reconcileTasks() is
@@ -119,6 +125,13 @@ async function claimSignupGrant(userId: string, at: Date): Promise<number> {
         eventAt: at,
       },
     })
+
+    // The grant is Leaves earned, so it settles debt like any other earning.
+    // In practice a brand-new account has no contracts to settle -- a debtor
+    // needs three completed trades -- but the rule is "every credit sweeps",
+    // and an exception here would be one more place for that to stop being true.
+    await applyEarningsToContracts(tx, userId)
+
     return SIGNUP_GRANT_LEAVES
   })
 }

@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import pusher from "@/lib/pusher"
 import { availableLeaves } from "@/lib/leaves"
 import { offerActionSchema, parseBody } from "@/lib/validation"
+import { enforceAcceptTrade } from "@/lib/reputation-gate"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -33,6 +34,36 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Guard: a user must not trade with themselves
     if (offer.senderId === offer.receiverId) {
       return NextResponse.json({ error: "Cannot trade with yourself" }, { status: 400 })
+    }
+
+    // ── Reputation gate, ACCEPT path ──
+    //
+    // The accepter is acquiring the offered items, so the tier value ceiling
+    // applies to those. The defaulted-trader block does not: accepting is the
+    // one move a defaulter must keep, because Leaves arriving this way are what
+    // pays their debt down.
+    //
+    // offeredItems is a JSON blob written by the client. Only well-formed
+    // string ids are passed on; enforceAcceptTrade() looks them up in Item and
+    // an id that matches nothing simply caps nothing, which is the same
+    // treatment an unvalued item gets.
+    if (action === "accept") {
+      let offeredIds: string[] = []
+      try {
+        const raw: unknown = JSON.parse(offer.offeredItems)
+        if (Array.isArray(raw)) {
+          offeredIds = raw
+            .filter((x): x is { id?: unknown } => !!x && typeof x === "object")
+            .map((x) => x.id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0)
+        }
+      } catch {
+        offeredIds = []
+      }
+      if (offeredIds.length > 0) {
+        const gate = await enforceAcceptTrade(session.user.id, offeredIds)
+        if (gate.response) return gate.response
+      }
     }
 
     // Re-check with the SAME rule used when the offer was created: total minus
