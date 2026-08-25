@@ -1,0 +1,535 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  password    String?
+
+  // Account verification. This flag — never "password is null" — is what
+  // "verified" means. Google sign-in (web callback and native token exchange)
+  // sets it; phone OTP will set this same flag when it lands, and nothing
+  // downstream will need to change. Flipping it false -> true is what triggers
+  // the VERIFY_ACCOUNT award and the one-time signup grant; see markVerified().
+  isVerified  Boolean  @default(false)
+
+  // One-time signup grant (SIGNUP_GRANT_LEAVES), claimed at verification, never
+  // at registration — an ungated grant lets an attacker mint Leaves by mass-
+  // creating accounts. Set true in the SAME statement that credits the Leaves,
+  // so two concurrent verifications cannot both pay out.
+  signupGrantClaimed Boolean @default(false)
+
+  avatar      String?
+  bio         String?  @db.Text
+  location    String?
+  rating      Float    @default(0)
+  totalTrades Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Account deletion (DELETE /api/user). The row is ANONYMISED here, never
+  // removed, and that is a ledger decision rather than a soft-delete habit:
+  // LeafTransaction.userId is a foreign key with onDelete: Cascade, so dropping
+  // the row would silently delete that user's ledger history and break
+  // SUM(User.leaves) == SUM(LeafTransaction.amount) — the one invariant the
+  // whole Leaf economy is checked against. Retiring the account keeps both
+  // sides of that equation intact while the personal data is scrubbed.
+  //
+  // Non-null means gone: resolveSession() refuses these accounts, so an access
+  // token issued before deletion stops working immediately.
+  deletedAt   DateTime?
+
+  items            Item[]
+  sentRequests     TradeRequest[] @relation("SentRequests")
+  receivedRequests TradeRequest[] @relation("ReceivedRequests")
+  sentMessages     Message[]      @relation("SentMessages")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  notifications         Notification[] @relation("NotificationRecipient")
+  triggeredNotifications Notification[] @relation("NotificationActor")
+  reviewsGiven     Review[]       @relation("ReviewsGiven")
+  reviewsReceived  Review[]       @relation("ReviewsReceived")
+  following        Follow[]       @relation("Follower")
+  followers        Follow[]       @relation("Followee")
+  postLikes        PostLike[]     @relation("UserPostLikes")
+  postComments     PostComment[]  @relation("UserPostComments")
+  commentLikes     CommentLike[]  @relation("UserCommentLikes")
+  sentOffers            Offer[]                @relation("SentOffers")
+  receivedOffers        Offer[]                @relation("ReceivedOffers")
+  leaves                Int                    @default(0)
+  lifetimeLeaves        Int                    @default(0)
+  leafTransactions      LeafTransaction[]
+  swapConfirmationCodes SwapConfirmationCode[]
+  taskCompletions       TaskCompletion[]
+  refreshTokens         RefreshToken[]
+  emailVerificationTokens EmailVerificationToken[]
+}
+
+model Follow {
+  id         String       @id @default(cuid())
+  status     FollowStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  followerId String
+  follower   User   @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followeeId String
+  followee   User   @relation("Followee", fields: [followeeId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followeeId])
+}
+
+// Refresh tokens for the native (React Native) client. The web admin side keeps
+// its NextAuth cookie session and never touches this table.
+//
+// Three properties do the security work, and none of them is optional:
+//   HASHED     — only the SHA-256 of the token is stored, so a database read
+//                does not hand out usable credentials.
+//   SINGLE USE — `usedAt` is stamped the first time a token is redeemed.
+//                Redeeming it again is, by definition, either a replay or a
+//                thief racing the legitimate client.
+//   FAMILY     — every token minted from the same original login shares a
+//                `familyId`. A replay revokes the WHOLE family, which logs out
+//                both the thief and the victim rather than letting the thief
+//                quietly keep rotating. That is the intended, safe outcome.
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  familyId  String
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+  // familyId is not decoration: revoking a family on replay looks up by it.
+  @@index([familyId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// Email verification for credentials signup.
+//
+// Same shape as PasswordResetToken with one deliberate difference: only the
+// SHA-256 of the token is stored. A reset token in the clear is already a
+// weakness in that table; there is no reason to reproduce it here, and hashing
+// costs a single digest on a path that runs once per account.
+//
+// Four properties do the work:
+//   HASHED     — a database read yields no usable verification link.
+//   EXPIRING   — 24 hours, checked on every redemption.
+//   SINGLE USE — the row is deleted the moment it is redeemed, so a link that
+//                leaks from a mailbox later is inert.
+//   ONE LIVE   — issuing purges any prior token for that user, so a resend
+//                invalidates the previous email rather than leaving a fleet of
+//                working links behind.
+//
+// Keyed on userId rather than email: the account is what gets verified, and an
+// email change must not leave a token that verifies the new address using proof
+// of the old one.
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Item {
+  id             String     @id @default(cuid())
+  title          String
+  description    String     @db.Text
+  images         String     @db.Text
+  category       Category
+  condition      Condition
+  valueLeaves    Int?
+  status         ItemStatus @default(AVAILABLE)
+
+  // Free text only: what the owner wants in return. This column used to double
+  // as a JSON envelope carrying the pickup coordinates, which is how a home
+  // address ended up being served to unauthenticated callers — a field named
+  // "wanted items" is not somewhere anyone thinks to look for location data.
+  // Pickup now lives in the three explicit columns below and is filtered by
+  // resolvePickup() in @/lib/item-visibility on every read path.
+  wantedItems    String?    @db.Text
+
+  // Exact pickup point. NEVER serialise these straight onto a response: full
+  // precision plus pickupAddress identifies a seller's home. Only the owner and
+  // an accepted trade counterparty may see them; everyone else gets the
+  // 2-decimal-place (~1 km) rounding that resolvePickup() applies.
+  pickupLat      Float?
+  pickupLng      Float?
+  pickupAddress  String?    @db.Text
+
+  imageHash      String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  offeredIn   TradeRequest[] @relation("OfferedItem")
+  requestedIn TradeRequest[] @relation("RequestedItem")
+  likes        PostLike[]     @relation("ItemPostLikes")
+  comments     PostComment[]  @relation("ItemPostComments")
+  offers       Offer[]        @relation("ItemOffers")
+}
+
+model TradeRequest {
+  id        String      @id @default(cuid())
+  status    TradeStatus @default(PENDING)
+  message   String?     @db.Text
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  hiddenBySender   Boolean @default(false)
+  hiddenByReceiver Boolean @default(false)
+  safeZoneMeetup   Boolean @default(false)
+
+  senderId   String
+  sender     User   @relation("SentRequests", fields: [senderId], references: [id])
+  receiverId String
+  receiver   User   @relation("ReceivedRequests", fields: [receiverId], references: [id])
+
+  offeredItemId   String
+  offeredItem     Item   @relation("OfferedItem", fields: [offeredItemId], references: [id])
+  requestedItemId String
+  requestedItem   Item   @relation("RequestedItem", fields: [requestedItemId], references: [id])
+
+  // Leaves moving from sender to receiver as part of this trade. NULL means
+  // none — the same thing the `?? 0` at each old recovery site meant.
+  //
+  // This is recorded ON the trade rather than recovered from the Offer that
+  // produced it. The old correlation (senderId + postId + status ACCEPTED) is
+  // not unique: five trades match more than one accepted offer, one matches
+  // eight, and one sender/post pair holds two different amounts (100 and 200).
+  // Settlement resolved that with findFirst() and no orderBy, so the amount it
+  // debited was whichever row the optimiser returned. Settlement is the one
+  // code path that moves currency; it does not get to guess.
+  offeredLeaves   Int?
+
+  messages              Message[]
+  reviews               Review[]
+  swapConfirmationCodes SwapConfirmationCode[]
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  senderId   String
+  sender     User   @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId String
+  receiver   User   @relation("ReceivedMessages", fields: [receiverId], references: [id])
+
+  tradeId String?
+  trade   TradeRequest? @relation(fields: [tradeId], references: [id])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  message   String
+  read      Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
+
+  // Structured navigation target, kept SEPARATE from `type`.
+  //
+  // `type` is the EVENT that happened; entityType/entityId are WHAT TO OPEN.
+  // They do not map one-to-one — TRADE_ACCEPTED and NEW_MESSAGE both point at a
+  // chat partner, while TRADE_COMPLETED points at a list with no id at all.
+  // Collapsing the two is the mismatch that bites later.
+  //
+  // entityType is a plain string, not an enum: the set of navigable targets
+  // grows with the mobile client and each addition would otherwise cost a
+  // schema migration for what is just a routing token.
+  //
+  // TWO VOCABULARIES LIVE IN THIS COLUMN. That is deliberate, and knowing which
+  // one a row uses is a matter of when it was written.
+  //
+  //   v1 and later (what new writes use) — the fine-grained set:
+  //     "conversation"   entityId = the other participant's userId
+  //     "trade"          entityId = the tradeId
+  //     "review"         entityId = the reviewId
+  //     "follow_request" entityId = null
+  //
+  //   pre-v1 (the migrated rows) — a coarse set the old `link` column could
+  //   actually support:
+  //     "user"   entityId = a userId, or null
+  //     "trade"  entityId = ALWAYS null
+  //
+  // The distinction that matters is "conversation" vs "user": a notification
+  // about a message opens a THREAD WITH someone, not their profile. The old
+  // links could not express that difference, which is why the backfill could
+  // not either.
+  //
+  // CAVEAT ON PRE-v1 ROWS. The backfill recovered only what the old `link`
+  // encoded, and trade notifications encoded a chat partner. So rows written
+  // before /api/v1 — TRADE_ACCEPTED in particular — carry ('user', <userId>)
+  // rather than ('trade', <tradeId>). Deliberately not corrected: they are
+  // already imperfect and they retire with the web user-side routes. Never read
+  // a pre-v1 TRADE_* entityId as a trade id.
+  //
+  // `link` is still written and still read by the web admin. Unchanged.
+  entityType String?
+  entityId   String?
+
+  userId  String
+  user    User    @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId String?
+  actor   User?   @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  rating    Int
+  comment   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  reviewerId String
+  reviewer   User   @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  revieweeId String
+  reviewee   User   @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+
+  tradeId String
+  trade   TradeRequest @relation(fields: [tradeId], references: [id])
+
+  @@unique([tradeId, reviewerId])
+}
+
+
+// Task reward system: one row per completed task.
+// One-time tasks use refId "" (MySQL treats NULLs as distinct in unique
+// indexes, so an empty-string default is what enforces once-per-user);
+// repeatable tasks (VERIFIED_SWAP, SAFEZONE_MEETUP) use refId = tradeId.
+// The @@unique below is what makes every award idempotent — do not relax it.
+model TaskCompletion {
+  id        String   @id @default(cuid())
+  task      TaskKind
+  refId     String   @default("")
+  leaves    Int
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, task, refId])
+  @@index([userId])
+}
+
+enum TaskKind {
+  VERIFY_ACCOUNT
+  COMPLETE_PROFILE
+  FIRST_LISTING
+  VERIFIED_SWAP
+  SAFEZONE_MEETUP
+}
+
+model SwapConfirmationCode {
+  id        String       @id @default(cuid())
+  tradeId   String
+  trade     TradeRequest @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  used      Boolean      @default(false)
+
+  // Wrong guesses against THIS code. A 6-digit code is a 1-in-a-million secret
+  // only while the number of guesses is bounded; unbounded, a trade participant
+  // can grind their partner's code and complete a "verified in-person swap"
+  // without ever meeting — which is exactly what the VERIFIED_SWAP and
+  // SAFEZONE_MEETUP Leaf awards are paid for. At MAX_CODE_ATTEMPTS the code is
+  // burned and both parties have to restart.
+  attempts  Int          @default(0)
+
+  expiresAt DateTime
+  createdAt DateTime     @default(now())
+
+  @@unique([tradeId, userId])
+}
+
+enum Category {
+  ELECTRONICS
+  CLOTHING
+  BAGS
+  BEAUTY
+  ACCESSORIES
+  FURNITURE
+  BOOKS
+  GAMING
+  SPORTS
+  BIKES
+  TOYS
+  TOOLS
+  MUSIC
+  ART
+  COLLECTIBLES
+  PETS
+  PLANTS
+  FOOD
+  SERVICES
+  OTHER
+}
+
+enum Condition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+  POOR
+}
+
+enum ItemStatus {
+  AVAILABLE
+  IN_TRADE
+  TRADED
+  OWNED
+  REMOVED
+}
+
+enum TradeStatus {
+  PENDING
+  ACCEPTED
+  CONFIRMING
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationType {
+  TRADE_REQUEST
+  TRADE_ACCEPTED
+  TRADE_REJECTED
+  TRADE_COMPLETED
+  TRADE_CANCELLED
+  NEW_MESSAGE
+  NEW_REVIEW
+  FOLLOW_REQUEST
+  FOLLOW_ACCEPTED
+}
+
+enum FollowStatus {
+  PENDING
+  ACCEPTED
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Item     @relation("ItemPostLikes", fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("UserPostLikes", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+}
+
+model PostComment {
+  id        String        @id @default(cuid())
+  postId    String
+  post      Item          @relation("ItemPostComments", fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation("UserPostComments", fields: [userId], references: [id], onDelete: Cascade)
+  content   String        @db.Text
+  parentId  String?
+  parent    PostComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   PostComment[] @relation("CommentReplies")
+  likes     CommentLike[]
+  createdAt DateTime      @default(now())
+}
+
+model CommentLike {
+  id        String      @id @default(cuid())
+  commentId String
+  comment   PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation("UserCommentLikes", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([commentId, userId])
+}
+
+model Offer {
+  id            String      @id @default(cuid())
+  postId        String
+  post          Item        @relation("ItemOffers", fields: [postId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        User        @relation("SentOffers", fields: [senderId], references: [id])
+  receiverId    String
+  receiver      User        @relation("ReceivedOffers", fields: [receiverId], references: [id])
+  offeredItems  String      @db.Text
+  offeredLeaves Int?
+  message       String?     @db.Text
+  status        OfferStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum LeafTxType {
+  TRADE_SPEND
+  TRADE_RECEIVE
+  TASK_REWARD
+  SIGNUP_GRANT
+}
+
+// Each row is one atomic Leaf movement (credit or debit).
+// Leaves are non-monetary. Two legitimate sources of a row:
+//   - a completed trade settlement, which always writes a matching
+//     TRADE_SPEND / TRADE_RECEIVE pair and nets to zero across users;
+//   - a TASK_REWARD, written in the same transaction that increments both
+//     leaves and lifetimeLeaves, and rate-limited by WEEKLY_TASK_LEAF_CAP.
+//
+// The two timestamps answer different questions and must not be conflated:
+//   createdAt — when THIS ROW was written. Never backdated. For a backfill this
+//               is the moment the backfill ran.
+//   eventAt   — when the qualifying action actually happened (the trade
+//               settling, the listing being posted). Equals createdAt on the
+//               live path; for a backfilled award it is the historical event.
+//
+// WEEKLY_TASK_LEAF_CAP windows on eventAt, so an award is judged against the
+// week it was earned in rather than the week it happened to be processed in.
+model LeafTransaction {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        LeafTxType
+  amount      Int        // positive = credit, negative = debit (in Pasa Leaves)
+  description String
+
+  // Optional references to the trade/offer that caused this debit/credit
+  offerId     String?
+  tradeId     String?
+
+  createdAt   DateTime   @default(now())
+  eventAt     DateTime
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([userId, eventAt])
+}
