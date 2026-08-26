@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
+import { userNotBlocked } from "@/lib/blocking"
+import { notSuspendedWhere } from "@/lib/moderation"
 
 export const dynamic = "force-dynamic"
 
@@ -25,13 +27,17 @@ export async function GET() {
     prisma.user.findMany({
       where: {
         id: { not: userId },
-        items: { some: { status: "AVAILABLE" } },
+        deletedAt: null,
+        items: { some: { status: "AVAILABLE", moderationHiddenAt: null } },
+        // Never suggest someone you blocked, or who blocked you, as a match.
+        ...userNotBlocked(userId),
+        ...notSuspendedWhere(),
       },
       select: {
         name: true,
         totalTrades: true,
         items: {
-          where: { status: "AVAILABLE" },
+          where: { status: "AVAILABLE", moderationHiddenAt: null },
           select: { category: true },
           take: 5,
         },

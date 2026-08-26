@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import { awardTaskAsync } from "@/lib/tasks"
 import { createItemSchema, parseBody, categorySchema } from "@/lib/validation"
 import { decideItemValue } from "@/lib/valuation-server"
+import { visibleItemWhere } from "@/lib/blocking"
 import {
   ITEM_PUBLIC_SELECT,
   ITEM_PUBLIC_USER_SELECT,
@@ -47,9 +48,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(items.map((i) => shapeItem(i, viewerId)))
     }
 
+    // The web's browse AND search path. visibleItemWhere() goes in beside the
+    // status filter rather than after the fetch, so a blocked owner's listing is
+    // excluded by the SQL on both — searching for it by title finds nothing,
+    // which is the whole point.
+    //
+    // The `mine` branch above deliberately does NOT get this: those are the
+    // caller's own items, nobody can block themselves, and a moderator takedown
+    // must stay visible to its owner or the listing silently vanishes with no
+    // explanation.
     const items = await prisma.item.findMany({
       where: {
         status: "AVAILABLE",
+        ...visibleItemWhere(viewerId),
         ...(categoryFilter?.success ? { category: categoryFilter.data } : {}),
         ...(q ? { OR: [{ title: { contains: q } }, { description: { contains: q } }] } : {}),
       },

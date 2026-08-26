@@ -3,6 +3,7 @@ import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { parseBody, updateItemSchema } from "@/lib/validation"
 import { decideItemValue } from "@/lib/valuation-server"
+import { isBlockedEitherWay } from "@/lib/blocking"
 import {
   ITEM_PUBLIC_SELECT,
   ITEM_PUBLIC_USER_SELECT,
@@ -33,10 +34,19 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     // to see an item that has moved to TRADED/OWNED through their own trade.
     const isOwner = item.userId === viewerId
     const access = await preciseAccessItemIds(viewerId, [item.id])
+
+    // The block and the moderator takedown both fold into `readable`, so all
+    // four reasons for hiding a listing produce the same 404 below. The owner
+    // is exempt from the takedown check: a listing that vanishes from its own
+    // owner's view with no explanation is a support ticket, and the shelf needs
+    // to render it in order to say "removed by a moderator".
+    const blocked = isOwner ? false : await isBlockedEitherWay(viewerId, item.userId)
     const readable =
       isOwner ||
-      access.has(item.id) ||
-      (READABLE_BY_OTHERS as readonly string[]).includes(item.status)
+      (!blocked &&
+        item.moderationHiddenAt === null &&
+        (access.has(item.id) ||
+          (READABLE_BY_OTHERS as readonly string[]).includes(item.status)))
 
     // 404 rather than 403: a hidden listing should not confirm its own existence.
     if (!readable) return NextResponse.json({ error: "Not found" }, { status: 404 })

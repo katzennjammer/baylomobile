@@ -5,6 +5,7 @@ import pusher from "@/lib/pusher"
 import { availableLeaves } from "@/lib/leaves"
 import { createOfferSchema, parseBody } from "@/lib/validation"
 import { enforceInitiateTrade } from "@/lib/reputation-gate"
+import { enforceNotBlocked } from "@/lib/blocking"
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +27,19 @@ export async function POST(req: NextRequest) {
     if (post.userId === session.user.id) {
       return NextResponse.json({ error: "Cannot make an offer on your own post" }, { status: 400 })
     }
+    if (post.moderationHiddenAt) {
+      return NextResponse.json({ error: "Post not found" }, { status: 404 })
+    }
+
+    // An offer is a trade initiation and creates a chat message as a side
+    // effect, so it is barred by a block on both counts. Before the reputation
+    // gates, for the same reason as the trade route.
+    const blocked = await enforceNotBlocked(
+      session.user.id,
+      post.userId,
+      "make an offer to this person",
+    )
+    if (blocked) return blocked
 
     // ── Reputation gates, INITIATING path ──
     //

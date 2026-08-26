@@ -47,6 +47,32 @@ export const RATE_LIMITS = {
   upload: { limit: 30, windowMs: HOUR },
   /** Guessing a partner's 6-digit swap code. Also capped per code in the DB. */
   confirmSubmit: { limit: 20, windowMs: HOUR },
+  /**
+   * Filing a report. Keyed on the reporter's user id, not their IP.
+   *
+   * AN UNLIMITED REPORT ENDPOINT IS A HARASSMENT TOOL. The abuse is not
+   * hypothetical and not subtle: one account, a loop, and every listing a rival
+   * owns is in the moderation queue by morning — which both drowns the real
+   * reports and, on any platform where reports auto-hide content, is a takedown
+   * button. The per-target constraint (one live report per reporter per target,
+   * enforced by a unique index) stops the same target being hit twice; this
+   * stops MANY targets being hit at once, and the two together are what make
+   * the endpoint safe to expose.
+   *
+   * 20 an hour is far above what a real person reports and far below what a
+   * script wants. On the user id rather than the IP because the budget being
+   * protected is the moderators' attention, which is spent per reporter — and
+   * because an IP-keyed limit punishes everyone behind one campus NAT for one
+   * bad actor.
+   */
+  report: { limit: 20, windowMs: HOUR },
+  /**
+   * Blocking. Generous on purpose: blocking is a SAFETY action and a limit that
+   * bites is a limit that leaves somebody unable to shut out a harasser who is
+   * cycling through accounts. This is here to stop a script writing rows
+   * forever, nothing more.
+   */
+  block: { limit: 60, windowMs: HOUR },
 } as const satisfies Record<string, RateRule>
 
 export type RateLimitName = keyof typeof RATE_LIMITS

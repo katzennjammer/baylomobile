@@ -3,6 +3,7 @@ import { z } from "zod"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { preciseAccessItemIds } from "@/lib/item-visibility"
+import { blockDirection } from "@/lib/blocking"
 import { getLeafRank } from "@/lib/task-constants"
 import { ok, unauthenticated, invalid, notFound } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape } from "@/lib/v1/query"
@@ -50,6 +51,21 @@ export async function GET(
   const cursor = decodeCursor(parsed.data.cursor)
   if (parsed.data.cursor && !cursor) return invalid("Malformed cursor")
 
+  // ── 0 ── the block check, before anything is read.
+  //
+  // A profile is not in the spec's list of surfaces a block hides ("feed,
+  // browse, search"), and it is included anyway, because a profile page IS a
+  // listing surface: it renders the user's items, their rating and their trade
+  // count. Hiding someone's listings everywhere except the one page that
+  // aggregates them would be an enforcement with a hole in the middle.
+  //
+  // 404, matching the deleted-account branch below and for the same reason a
+  // blocked item detail 404s: a 403 would confirm the account exists and, to
+  // the blocked party, that they have been blocked.
+  if (await blockDirection(viewerId, id) !== "none") {
+    return notFound("Profile not found")
+  }
+
   // ── 1 ──
   const user = await prisma.user.findUnique({
     where: { id },
@@ -59,7 +75,7 @@ export async function GET(
       isVerified: true, createdAt: true, deletedAt: true,
       _count: {
         select: {
-          items: { where: { status: "AVAILABLE" } },
+          items: { where: { status: "AVAILABLE", moderationHiddenAt: null } },
           reviewsReceived: true,
           followers: { where: { status: "ACCEPTED" } },
           following: { where: { status: "ACCEPTED" } },
@@ -87,7 +103,13 @@ export async function GET(
 
   // ── 3 ── their inventory. AVAILABLE only: what they own is not public.
   const itemRows = await prisma.item.findMany({
-    where: { userId: id, status: "AVAILABLE", ...(olderThan(cursor) ?? {}) },
+    where: {
+      userId: id,
+      status: "AVAILABLE",
+      // The block is already handled above; this is the moderator takedown.
+      moderationHiddenAt: null,
+      ...(olderThan(cursor) ?? {}),
+    },
     select: {
       ...V1_ITEM_SELECT,
       user: { select: V1_ITEM_OWNER_SELECT },

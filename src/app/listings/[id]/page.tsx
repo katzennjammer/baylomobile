@@ -9,6 +9,7 @@ import TradeButton from "./TradeButton"
 import AvatarImage from "@/components/AvatarImage"
 import RelistButton from "@/app/dashboard/shelf/RelistButton"
 import { CompactRepBadge, LeafRankBadge } from "@/components/RepBadge"
+import ReportBlockMenu from "@/components/ReportBlockMenu"
 
 export default async function ItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -160,6 +161,18 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
               requestedItemTitle={item.title}
               ownedItems={ownedItems}
             />
+          )}
+
+          {/* Report the LISTING, block the PERSON — two different targets, which
+              is why blockUser is separate. Hidden for the owner and for a signed-
+              out visitor; the routes refuse both regardless. */}
+          {session?.user?.id && !isOwner && (
+            <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+              <ReportBlockMenu
+                target={{ type: "listing", id: item.id }}
+                blockUser={{ id: item.user.id, name: item.user.name }}
+              />
+            </div>
           )}
         </div>
       </div>

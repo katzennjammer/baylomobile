@@ -3,6 +3,7 @@ import { z } from "zod"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { preciseAccessItemIds } from "@/lib/item-visibility"
+import { visibleItemWhere } from "@/lib/blocking"
 import { categorySchema } from "@/lib/validation"
 import { ok, unauthenticated, invalid } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape } from "@/lib/v1/query"
@@ -86,8 +87,13 @@ export async function GET(req: NextRequest) {
         })()
       : undefined
 
+  // visibleItemWhere() rides in the base, so BOTH sort branches and the search
+  // filter inherit it. That placement is the point: `q` is the search path, and
+  // a blocked user's listing being findable by title while being absent from
+  // the feed is the same leak wearing a different hat.
   const baseWhere = {
     status: "AVAILABLE" as const,
+    ...visibleItemWhere(viewerId),
     ...(category ? { category } : {}),
     ...(q ? { OR: [{ title: { contains: q } }, { description: { contains: q } }] } : {}),
     ...(box ?? {}),
@@ -157,9 +163,15 @@ export async function GET(req: NextRequest) {
   // Deliberately NOT filtered by the current category: chips that vanish as soon
   // as you pick one are a worse control than chips that stay put. The text and
   // radius filters are not applied either, for the same reason.
+  //
+  // The block and takedown filters DO apply here, unlike the category/text/
+  // radius filters above. Those are omitted so the chips stay put as you use
+  // them; a blocked user's listings are not a filter the viewer is toggling,
+  // they are content that does not exist for this viewer, and a chip counting
+  // them sends the user to an empty result.
   const facetRows = await prisma.item.groupBy({
     by: ["category"],
-    where: { status: "AVAILABLE" },
+    where: { status: "AVAILABLE", ...visibleItemWhere(viewerId) },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
   })

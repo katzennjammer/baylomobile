@@ -3,6 +3,8 @@ import { z } from "zod"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { preciseAccessItemIds } from "@/lib/item-visibility"
+import { visibleItemWhere, userNotBlocked } from "@/lib/blocking"
+import { notSuspendedWhere } from "@/lib/moderation"
 import { getLeafRank } from "@/lib/task-constants"
 import { ok, unauthenticated, invalid } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape } from "@/lib/v1/query"
@@ -69,8 +71,17 @@ export async function GET(req: NextRequest) {
   if (!viewer) return unauthenticated()
 
   // ── 2 ── the feed: everything available, newest first, keyset paginated.
+  //
+  // visibleItemWhere() adds its constraints to the SQL, not to the result set:
+  // the owner is not blocked in either direction, the owner is not currently
+  // suspended, and no moderator has taken the listing down. All three are
+  // NOT EXISTS subqueries / IS NULL tests inside this same statement, so a
+  // blocked user's listing is never fetched, never
+  // counted against `take`, and never on the wire. Filtering after the fetch
+  // would silently shorten every page — 20 requested, 17 shown — and break the
+  // keyset cursor's contract that a full page means there is more.
   const feedRows = await prisma.item.findMany({
-    where: { status: "AVAILABLE", ...(keyset ?? {}) },
+    where: { status: "AVAILABLE", ...visibleItemWhere(viewerId), ...(keyset ?? {}) },
     select: {
       ...V1_ITEM_SELECT,
       user: { select: V1_ITEM_OWNER_SELECT },
@@ -87,20 +98,40 @@ export async function GET(req: NextRequest) {
   const access = await preciseAccessItemIds(viewerId, page.map((r) => r.id))
 
   // ── 4 ── trending: the 7-day category groupBy that four web pages inline.
+  // Blocked owners and moderator-hidden listings are excluded here too. A
+  // trending chip is a count of things you can then go and look at; counting
+  // listings the next screen refuses to show you makes the chip a lie and,
+  // worse, leaks the existence of a blocked user's activity as a number.
   const trendingRows = await prisma.item.groupBy({
     by: ["category"],
-    where: { createdAt: { gte: weekAgo }, status: { not: "REMOVED" } },
+    where: {
+      createdAt: { gte: weekAgo },
+      status: { not: "REMOVED" },
+      ...visibleItemWhere(viewerId),
+    },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
     take: 5,
   })
 
   // ── 5 ── match candidates.
+  // Suggesting someone you blocked, or who blocked you, as a trading partner is
+  // the single most conspicuous way a half-enforced block announces itself.
   const candidates = await prisma.user.findMany({
-    where: { id: { not: viewerId }, deletedAt: null, items: { some: { status: "AVAILABLE" } } },
+    where: {
+      id: { not: viewerId },
+      deletedAt: null,
+      items: { some: { status: "AVAILABLE", moderationHiddenAt: null } },
+      ...userNotBlocked(viewerId),
+      ...notSuspendedWhere(),
+    },
     select: {
       id: true, name: true, avatar: true, totalTrades: true,
-      items: { where: { status: "AVAILABLE" }, select: { category: true }, take: 5 },
+      items: {
+        where: { status: "AVAILABLE", moderationHiddenAt: null },
+        select: { category: true },
+        take: 5,
+      },
     },
     orderBy: { updatedAt: "desc" },
     take: 5,

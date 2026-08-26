@@ -20,7 +20,8 @@ export const dynamic = "force-dynamic"
  * with use.
  *
  *   1  raw: latest message id per partner, with a correlated unread count,
- *      keyset-paginated on (lastAt, partnerId)
+ *      keyset-paginated on (lastAt, partnerId), blocked partners excluded by a
+ *      NOT EXISTS inside the grouping subquery
  *   2  hydrate exactly those message rows with their two participants
  *
  * The first is raw SQL and that is not a lapse from the plain-Prisma rule that
@@ -78,7 +79,27 @@ export async function GET(req: NextRequest) {
         CASE WHEN m.senderId = ${viewerId} THEN m.receiverId ELSE m.senderId END AS partnerId,
         MAX(m.createdAt) AS lastAt
       FROM Message m
-      WHERE m.senderId = ${viewerId} OR m.receiverId = ${viewerId}
+      WHERE (m.senderId = ${viewerId} OR m.receiverId = ${viewerId})
+        -- Blocked threads are HIDDEN, NOT DELETED. The messages stay in the
+        -- table (a moderator reading a harassment report needs them); the
+        -- thread stops appearing in either party's list.
+        --
+        -- This is a NOT EXISTS inside the grouping subquery, and the placement
+        -- is the point: filtering after the GROUP BY would still let a blocked
+        -- partner consume one of the limit-plus-one rows, silently shortening
+        -- the page and breaking the (lastAt, partnerId) keyset promise that a
+        -- full page means there is more. Filtered here, the blocked partner is
+        -- never a group at all.
+        --
+        -- Both directions, one clause: the pair is checked whichever way round
+        -- the block was made.
+        AND NOT EXISTS (
+          SELECT 1 FROM Block b
+          WHERE (b.blockerId = ${viewerId}
+                 AND b.blockedId = CASE WHEN m.senderId = ${viewerId} THEN m.receiverId ELSE m.senderId END)
+             OR (b.blockedId = ${viewerId}
+                 AND b.blockerId = CASE WHEN m.senderId = ${viewerId} THEN m.receiverId ELSE m.senderId END)
+        )
       GROUP BY partnerId
     ) t
     WHERE ${

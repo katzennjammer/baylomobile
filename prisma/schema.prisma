@@ -78,6 +78,49 @@ model User {
   // and a derived penalty is one that a lazy deadline sweep cannot apply twice.
   contractsAsDebtor   DeferredContract[] @relation("ContractDebtor")
   contractsAsCreditor DeferredContract[] @relation("ContractCreditor")
+
+  // ── Moderation ─────────────────────────────────────────────────────────────
+  //
+  // The first privileged concept in this codebase. Every other authorisation
+  // decision here is ownership-based -- you may edit an item because it is your
+  // item -- and that shape cannot express "may act on someone else's content",
+  // which is the whole job of a moderator.
+  //
+  // NO API ROUTE WRITES THIS COLUMN. Not an admin-only one, not a
+  // super-admin-only one, none. An endpoint that can grant ADMIN is a
+  // privilege-escalation target whose entire value is saving somebody a SQL
+  // prompt once a year, and the escalation is total: an ADMIN can suspend every
+  // account including the ones that would notice. Promotion is:
+  //
+  //   UPDATE `User` SET `role` = 'ADMIN' WHERE `email` = '...';
+  //
+  // Enforced by absence, and by scripts/verify-moderation.ts, which greps the
+  // route tree for any handler that reads `role` out of a request body.
+  role Role @default(USER)
+
+  // Account suspension, written only by POST /api/admin/users/[id] with
+  // action "suspend" / "unsuspend".
+  //
+  // suspendedAt     non-null means suspended right now.
+  // suspendedUntil  when it lifts. NULL WITH suspendedAt SET MEANS INDEFINITE --
+  //                 not "already lifted". suspensionState() in @/lib/moderation
+  //                 is the only correct reading of the pair; do not test either
+  //                 column alone.
+  //
+  // Both are CLEARED on unsuspend rather than kept as history. That is the
+  // opposite of DeferredContract.defaultedAt, and deliberately so: a default is
+  // a fact about the debtor that the tier system keeps charging against, while a
+  // lifted suspension is a moderation decision whose record belongs in
+  // AdminAction, next to who lifted it and why. A suspension history smeared
+  // across the User row would be a second, worse audit log.
+  suspendedAt    DateTime?
+  suspendedUntil DateTime?
+
+  reportsMade     Report[]      @relation("ReportReporter")
+  reportsResolved Report[]      @relation("ReportResolver")
+  blocksMade      Block[]       @relation("Blocker")
+  blocksReceived  Block[]       @relation("Blocked")
+  adminActions    AdminAction[] @relation("AdminActor")
 }
 
 model Follow {
@@ -218,6 +261,18 @@ model Item {
   pickupLng     Float?
   pickupAddress String? @db.Text
 
+  // Moderator takedown. NULL means "not hidden by us"; non-null is the moment a
+  // moderator removed it, and the who/why lives in the AdminAction row written
+  // in the same transaction.
+  //
+  // A SEPARATE COLUMN AND NOT `status = REMOVED`, for one concrete reason: the
+  // owner can already move their own item in and out of REMOVED/OWNED/AVAILABLE
+  // -- POST /api/items/[id]/relist does exactly that -- so a takedown expressed
+  // as a status would be undoable by the person it was aimed at. Every read path
+  // filters on `moderationHiddenAt: null` in the WHERE clause, and relist
+  // refuses while it is set.
+  moderationHiddenAt DateTime?
+
   imageHash String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -313,6 +368,7 @@ model Notification {
   //     "trade"          entityId = the tradeId
   //     "review"         entityId = the reviewId
   //     "follow_request" entityId = null
+  //     "report"         entityId = the reportId (REPORT_RESOLVED)
   //
   //   pre-v1 (the migrated rows) — a coarse set the old `link` column could
   //   actually support:
@@ -466,6 +522,9 @@ enum NotificationType {
   NEW_REVIEW
   FOLLOW_REQUEST
   FOLLOW_ACCEPTED
+  // The outcome of a report the recipient filed. Google Play expects a reporter
+  // to be told what happened, and /trust promises it in so many words.
+  REPORT_RESOLVED
 }
 
 enum FollowStatus {
@@ -661,4 +720,220 @@ enum ContractStatus {
   // one fact the preview screen exists to surface — that someone looked at this
   // debtor's numbers and said no. See the note in the change report.
   DECLINED
+}
+
+// ── Moderation: roles, reports, blocks, audit ────────────────────────────────
+//
+// Google Play's UGC policy requires in-app reporting and in-app blocking before
+// a marketplace app passes review. That is why these four models exist now
+// rather than later. It is not why they are shaped the way they are.
+
+/**
+ * Privilege. See the long note on User.role: nothing in the API writes it.
+ *
+ * MODERATOR and ADMIN are distinct even though every route below currently
+ * accepts either. The split costs one enum value today and is the difference
+ * between "revoke this person's moderation rights" and "there is one kind of
+ * staff account" the first time somebody needs the former.
+ */
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum ReportTargetType {
+  LISTING
+  USER
+  MESSAGE
+}
+
+/**
+ * Why the reporter says the content is wrong.
+ *
+ * SCREAMING_SNAKE in the database, matching every other enum here, and the wire
+ * carries the lower-case forms ("prohibited_item", "scam_or_fraud") through an
+ * explicit closed map in @/lib/moderation. That is the same call
+ * Item.valuationSource documents and for the same reason: a wire value
+ * generated from a database enum name changes the day somebody renames the
+ * enum, and a mobile client has already shipped against the old spelling.
+ */
+enum ReportCategory {
+  SPAM
+  PROHIBITED_ITEM
+  SCAM_OR_FRAUD
+  HARASSMENT
+  COUNTERFEIT
+  OTHER
+}
+
+/**
+ * OPEN and REVIEWING are both LIVE -- see Report.openKey. ACTIONED and
+ * DISMISSED are both RESOLVED, and the difference between them is whether
+ * anything happened to the target, which is exactly what the reporter is told.
+ */
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  ACTIONED
+  DISMISSED
+}
+
+/**
+ * One user's claim that one piece of content breaks the rules.
+ *
+ * The target is a (type, id) pair rather than three nullable foreign keys.
+ * Nullable FKs would give the database a shape it can check -- a real
+ * constraint that the listing exists -- and that is a genuine loss, taken
+ * deliberately: a report must survive its target. A scam listing that gets
+ * deleted, by its owner or by us, is precisely the report a moderator still
+ * needs to read, and an FK with ON DELETE CASCADE would erase the evidence at
+ * the moment it started mattering. The route validates that the target exists
+ * at report time; nothing keeps it alive afterwards, and nothing needs to.
+ */
+model Report {
+  id String @id @default(cuid())
+
+  reporterId String
+  reporter   User   @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  targetType ReportTargetType
+  targetId   String
+  category   ReportCategory
+  /** Free text from the reporter. Capped at MAX_REPORT_NOTES in @/lib/moderation. */
+  notes      String?          @db.Text
+
+  status ReportStatus @default(OPEN)
+
+  /**
+   * "One OPEN report per reporter per target" as a database constraint.
+   *
+   * MySQL treats NULLs as DISTINCT in a unique index -- the same property
+   * TaskCompletion.refId leans on, inverted. This column holds the literal
+   * "live" while the report is OPEN or REVIEWING and NULL once it is ACTIONED
+   * or DISMISSED, so the @@unique below permits exactly one live report per
+   * (reporter, target) and any number of resolved ones. Without it a reporter
+   * who was told "no" could never report that target again, which is wrong: a
+   * seller who cleans up a listing and re-posts the same violation next month
+   * has committed a new violation.
+   *
+   * WRITTEN BY THE APPLICATION, in the same statement that sets `status`, and
+   * never on its own -- see resolveReport() in @/lib/moderation, which is the
+   * only code that moves either column. It was going to be a STORED generated
+   * column, which cannot drift at all; MariaDB 10.4.32 hangs the entire server
+   * on an UPDATE to a table with a stored generated column inside a unique
+   * index (a leaked buf0flu latch that takes DICT_SYS down with it), so that
+   * idea is recorded here as tried and rejected rather than left for the next
+   * person to rediscover it the same way.
+   */
+  openKey String? @db.VarChar(4)
+
+  /** Who closed it. SetNull rather than Cascade: the report outlives the staff account. */
+  resolvedById String?
+  resolvedBy   User?     @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt   DateTime?
+  /** What the reporter is told. Goes verbatim into the REPORT_RESOLVED notification. */
+  resolutionNote String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  actions AdminAction[]
+
+  @@unique([reporterId, targetType, targetId, openKey])
+  // The queue: filtered by status, newest first.
+  @@index([status, createdAt])
+  // "everything ever filed against this listing" -- the report detail screen.
+  @@index([targetType, targetId])
+  @@index([reporterId])
+}
+
+/**
+ * A one-way wall. blocker stops seeing, and stops being reachable by, blocked.
+ *
+ * ONE ROW, NOT TWO. A block is asymmetric as an act -- only the blocker chose it
+ * and only the blocker can undo it -- and symmetric in effect, because every
+ * enforcement point queries BOTH directions (blocksMade none + blocksReceived
+ * none). Writing a mirror row would make "who blocked whom" unrecoverable,
+ * which is the one fact a moderator reading a harassment report needs.
+ *
+ * WHAT A BLOCK DOES NOT DO: cancel a trade, void a DeferredContract, or delete
+ * a message. See the note above enforceNotBlocked() in @/lib/blocking -- a
+ * block that could rewind an obligation would be a debtor's escape hatch from
+ * a creditor, and the block button is not a contract-reversal button.
+ */
+model Block {
+  id String @id @default(cuid())
+
+  blockerId String
+  blocker   User   @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User   @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  // Every feed query asks "has anyone blocked me?", which reads this side.
+  @@index([blockedId])
+}
+
+enum AdminActionKind {
+  REPORT_REVIEWING
+  REPORT_DISMISSED
+  REPORT_ACTIONED
+  LISTING_HIDDEN
+  LISTING_UNHIDDEN
+  USER_SUSPENDED
+  USER_UNSUSPENDED
+}
+
+enum AdminTargetType {
+  REPORT
+  LISTING
+  USER
+}
+
+/**
+ * The audit trail. Who did what, when, and why.
+ *
+ * Moderation without an audit row is indistinguishable from abuse: a suspended
+ * user, a hidden listing and a dismissed report all look the same whether a
+ * moderator followed the policy or settled a grudge, and the only difference
+ * that can ever be recovered is the one that was written down at the time.
+ *
+ * `reason` is NOT NULL AND NOT DEFAULTED. Every route that writes one of these
+ * requires the moderator to type it. An optional reason is a reason nobody
+ * fills in.
+ *
+ * `actorId` has no onDelete, which on MySQL means RESTRICT: the database
+ * refuses to delete a staff account that has moderated anything. Deleting a
+ * moderator must not vacuum up the record of what they did.
+ */
+model AdminAction {
+  id String @id @default(cuid())
+
+  actorId String
+  actor   User   @relation("AdminActor", fields: [actorId], references: [id])
+
+  action     AdminActionKind
+  targetType AdminTargetType
+  targetId   String
+
+  /** The report this action answers, when there is one. Bulk cleanup has none. */
+  reportId String?
+  report   Report? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  reason String @db.Text
+  /**
+   * JSON snapshot of what changed -- prior item status, prior suspension dates,
+   * the listing title as it read at takedown. A plain Text column and not a
+   * relation, matching LeafTransaction.tradeId: the audit points at things,
+   * nothing points back at the audit.
+   */
+  detail String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@index([createdAt])
 }

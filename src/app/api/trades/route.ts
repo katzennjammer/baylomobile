@@ -5,6 +5,7 @@ import pusher from "@/lib/pusher"
 import { ITEM_PUBLIC_SELECT, preciseAccessItemIds, shapeItem } from "@/lib/item-visibility"
 import { parseBody, createTradeSchema, tradeStatusSchema } from "@/lib/validation"
 import { enforceInitiateTrade, enforceAcceptTrade } from "@/lib/reputation-gate"
+import { enforceNotBlocked } from "@/lib/blocking"
 
 export async function GET() {
   try {
@@ -71,6 +72,26 @@ export async function POST(req: NextRequest) {
     if (requestedItem.status !== "AVAILABLE") {
       return NextResponse.json({ error: "Item is not available for trade" }, { status: 400 })
     }
+
+    // A moderator takedown is not a status, so it needs its own check -- see
+    // the note on Item.moderationHiddenAt for why it is not folded into
+    // ItemStatus. Same 400 as an unavailable item: a would-be trader has no
+    // business learning that a specific listing was removed by us.
+    if (requestedItem.moderationHiddenAt) {
+      return NextResponse.json({ error: "Item is not available for trade" }, { status: 400 })
+    }
+
+    // Neither party can initiate a trade with the other once a block exists in
+    // either direction. This runs BEFORE the reputation gates, because "you
+    // cannot contact this person" is a more fundamental refusal than "your tier
+    // does not allow this item" and the caller should not be told the second
+    // when the first applies.
+    const blocked = await enforceNotBlocked(
+      session.user.id,
+      requestedItem.userId,
+      "start a trade with this person",
+    )
+    if (blocked) return blocked
 
     // ── Reputation gates ──
     //

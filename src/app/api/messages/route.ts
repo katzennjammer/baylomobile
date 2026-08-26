@@ -3,6 +3,7 @@ import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import pusher from "@/lib/pusher"
 import { createMessageSchema, parseBody } from "@/lib/validation"
+import { blockDirection, enforceNotBlocked } from "@/lib/blocking"
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,6 +12,30 @@ export async function GET(req: NextRequest) {
 
     const partnerId = new URL(req.url).searchParams.get("partnerId")
     if (!partnerId) return NextResponse.json({ error: "partnerId required" }, { status: 400 })
+
+    // HIDDEN, NOT DELETED. The rows stay in the table -- a moderator reading a
+    // harassment report needs the conversation that caused it, and deleting
+    // history on block would destroy evidence at the request of either party,
+    // including the harasser. What changes is that neither side can open it.
+    //
+    // Note the `read` flag is NOT flipped below on this path: marking a blocked
+    // thread as read would let the block silently clear the other party's
+    // unread badge, which is state the blocker no longer gets to touch.
+    const direction = await blockDirection(session.user.id, partnerId)
+    if (direction !== "none") {
+      return NextResponse.json(
+        {
+          error: "This conversation is unavailable.",
+          code: "BLOCKED",
+          // The blocker is told they can undo it; the blocked party is told
+          // nothing that distinguishes their case from the other. Same status,
+          // same error text, one extra boolean that is only ever true for the
+          // person who already knows.
+          youBlocked: direction === "byViewer" || direction === "mutual",
+        },
+        { status: 403 },
+      )
+    }
 
     const messages = await prisma.message.findMany({
       where: {
@@ -41,6 +66,15 @@ export async function POST(req: NextRequest) {
     const parsed = await parseBody(req, createMessageSchema)
     if (!parsed.ok) return parsed.response
     const { receiverId, content, tradeId } = parsed.data
+
+    // Blocked users cannot message each other -- in either direction, and
+    // regardless of whether a trade between them is in progress. See the note
+    // above blockConsequences() in @/lib/blocking for why the trade stays alive
+    // while the channel closes: the block shuts new contact, it does not rewind
+    // an obligation, and a block that stayed porous "just for this trade" would
+    // reopen exactly the channel the user blocked to close.
+    const blocked = await enforceNotBlocked(session.user.id, receiverId, "message this person")
+    if (blocked) return blocked
 
     const message = await prisma.message.create({
       data: {

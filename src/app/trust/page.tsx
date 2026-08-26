@@ -25,13 +25,13 @@ const PRINCIPLES = [
   },
   {
     num: "04",
-    title: "Dispute resolution",
-    body: "Raise a dispute within 48 hours of a completed trade. Our moderation team reviews the evidence, contacts both parties, and issues a decision within three business days. Repeat offenders are suspended.",
+    title: "Report and block",
+    body: "Report any listing, account, or message from inside the app — pick a reason, add what happened, and it goes straight into our moderation queue. You will be told the outcome. You can also block someone outright: you stop seeing each other’s listings and neither of you can message the other.",
   },
   {
     num: "05",
-    title: "Transparent moderation",
-    body: "Item listings are screened against our Prohibited Items policy before going live. We act on reports within 24 hours and keep a public count of items removed each month so the community can hold us accountable.",
+    title: "Accountable moderation",
+    body: "Every report is read by a person, not a bot. Moderators can hide a listing or suspend an account, and every action they take is written to an audit log recording who did it, when, and why — so moderation itself can be reviewed.",
   },
   {
     num: "06",
@@ -305,12 +305,12 @@ export default function TrustPage() {
                 Something<br />went wrong?
               </h2>
               <p style={{ fontSize: "clamp(15px,1.2vw,18px)", color: "var(--muted)", lineHeight: 1.65, marginBottom: 32 }}>
-                Disputes happen. When they do, our moderation team steps in fast. File a
-                report through the trade page, attach any evidence (photos, chat screenshots),
-                and we'll reach a resolution within <strong style={{ color: "var(--text)" }}>3 business days</strong>.
+                Something went wrong? Report it from the listing, the profile, or the message
+                thread. It lands in a moderation queue that a person works through, and when a
+                decision is made you get a notification saying what we did and why.
               </p>
-              <Link href="mailto:hello@baylo.ph" className="btn solid">
-                Contact support
+              <Link href="/dashboard" className="btn solid">
+                Go to your dashboard
                 <span className="arrow">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 12h13M13 6l6 6-6 6" />
@@ -320,10 +320,10 @@ export default function TrustPage() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {[
-                { step: "01", label: "Open the trade", desc: "Go to your trade history and click 'Report an issue' on the relevant trade." },
-                { step: "02", label: "Submit evidence", desc: "Upload photos, describe what happened. The other party is notified and can respond within 24 hours." },
-                { step: "03", label: "We review", desc: "Our team reads both sides, checks listing details and chat history, and may ask follow-up questions." },
-                { step: "04", label: "Resolution issued", desc: "We restore points, issue warnings, or suspend accounts based on findings. You'll receive a written decision." },
+                { step: "01", label: "Report it", desc: "Use the Report button on the listing, the profile, or the message thread. Pick a reason and describe what happened." },
+                { step: "02", label: "Block if you need to", desc: "Blocking is separate and immediate. You stop seeing each other's listings, and neither of you can message the other." },
+                { step: "03", label: "A person reviews it", desc: "A moderator sees the reported content, the conversation around it, and everything else ever reported about that listing or account." },
+                { step: "04", label: "You are told the outcome", desc: "You get a notification saying whether we acted and why. Moderators can hide a listing or suspend an account, and every action is written to an audit log." },
               ].map((s) => (
                 <div key={s.step} style={{
                   background: "var(--card)", border: "1px solid var(--line)",
@@ -356,16 +356,18 @@ export default function TrustPage() {
             <div>
               <p className="kicker" style={{ marginBottom: 14 }}>See something wrong?</p>
               <h2 className="display" style={{ fontSize: "clamp(28px,3vw,48px)", color: "var(--text)", marginBottom: 16 }}>
-                Report it. We act<br />within 24 hours.
+                Report it.<br />Or block them.
               </h2>
               <p style={{ fontSize: "clamp(14px,1.1vw,17px)", color: "var(--muted)", lineHeight: 1.65, maxWidth: "52ch" }}>
                 Seen a prohibited listing, a scam account, or behaviour that violates our
-                community standards? Every report is reviewed by a human — not a bot.
+                community standards? There is a Report button on every listing, profile and
+                message thread. Every report is read by a human — not a bot — and you are told
+                the outcome. Blocking is immediate and does not wait for us.
               </p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
-              <Link href="mailto:hello@baylo.ph" className="btn solid" style={{ whiteSpace: "nowrap" }}>
-                Email support
+              <Link href="/listings" className="btn solid" style={{ whiteSpace: "nowrap" }}>
+                Report from a listing
                 <span className="arrow">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 12h13M13 6l6 6-6 6" />

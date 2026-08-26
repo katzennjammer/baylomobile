@@ -144,6 +144,12 @@ export const ITEM_PUBLIC_SELECT = {
   createdAt: true,
   updatedAt: true,
   userId: true,
+  // Moderator takedown. Selected because the read paths test it, and it DOES
+  // travel to the client through shapeItem() — deliberately. For anyone but the
+  // owner it is always null, because a hidden listing never survives the WHERE
+  // clause; for the owner it is the only way their shelf can say "removed by a
+  // moderator" instead of silently losing a row.
+  moderationHiddenAt: true,
   pickupLat: true,
   pickupLng: true,
   pickupAddress: true,

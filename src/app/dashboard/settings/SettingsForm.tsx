@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState } from "react"
+import BlockedUsers from "./BlockedUsers"
 
 interface Props {
   name: string
@@ -145,6 +146,10 @@ export default function SettingsForm({ name, email, bio, location, hasPassword }
           {saving ? "Saving…" : hasPassword ? "Change password" : "Set password"}
         </button>
       </form>
+
+      {/* Blocked people. Play requires blocking to be reversible in-app, and a
+          block you cannot find again is a permanent decision made in a second. */}
+      <BlockedUsers />
 
       {/* Account info */}
       <div style={{ ...section, gap: 10 }}>

@@ -6,6 +6,7 @@ import toast from "react-hot-toast"
 import { subscribeChannel, unsubscribeChannel } from "@/lib/pusher-client"
 import AvatarImage from "@/components/AvatarImage"
 import { Icon } from "@/app/dashboard/_shell/TopNav"
+import ReportBlockMenu from "@/components/ReportBlockMenu"
 import { OfferCard, SharedPostCard, VoicePlayer, ChatImageBubble } from "@/components/chat-renderers"
 import {
   tryParseMsg, uploadChatImage,
@@ -284,6 +285,25 @@ export default function MessagesClient({
                 )}
               </div>
               <p className="font-semibold text-sm text-gray-900">{selected.partnerName}</p>
+
+              {/* The third reporting surface. The target here is the PARTNER
+                  rather than one message, because a thread-level "report" is
+                  what a user reaches for -- reporting a specific message is
+                  supported by the API (targetType "message") and belongs on the
+                  bubble itself, which is a bigger change to this file than this
+                  work needs. Blocking from here hides the thread for both sides
+                  and is the action Play actually requires next to a conversation. */}
+              <div className="ml-auto">
+                <ReportBlockMenu
+                  target={{ type: "user", id: selected.partnerId }}
+                  blockUser={{ id: selected.partnerId, name: selected.partnerName }}
+                  onBlocked={() => {
+                    setConversations((prev) => prev.filter((c) => c.partnerId !== selected.partnerId))
+                    setSelected(null)
+                    setMessages([])
+                  }}
+                />
+              </div>
             </div>
 
             {/* Messages */}

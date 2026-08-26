@@ -3,6 +3,7 @@ import { z } from "zod"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { preciseAccessItemIds } from "@/lib/item-visibility"
+import { visibleItemWhere } from "@/lib/blocking"
 import { ok, unauthenticated, notFound } from "@/lib/v1/envelope"
 import { parseQuery } from "@/lib/v1/query"
 import { V1_ITEM_SELECT, V1_ITEM_OWNER_SELECT, v1ItemStatsSelect, v1Item, type V1ItemRow } from "@/lib/v1/item"
@@ -47,8 +48,14 @@ export async function GET(
   if (!parsed.ok) return parsed.response
 
   // ── 1 ──
-  const item = await prisma.item.findUnique({
-    where: { id },
+  //
+  // findFirst with visibleItemWhere(), not findUnique by id. The block and the
+  // takedown are part of the WHERE, so a listing the viewer may not see simply
+  // does not come back and the 404 below covers it — rather than being fetched
+  // and then rejected by a second `if`, which is the shape that eventually
+  // grows a path around it.
+  const item = await prisma.item.findFirst({
+    where: { id, ...visibleItemWhere(viewerId) },
     select: {
       ...V1_ITEM_SELECT,
       imageHash: true,
@@ -58,6 +65,10 @@ export async function GET(
     },
   })
 
+  // 404 for absent, REMOVED, moderator-hidden, and blocked-either-way alike.
+  // Deliberately one answer for all four: a 403 on the blocked case would tell
+  // the blocked party that the listing exists and therefore that they have been
+  // blocked, which hands a harasser a signal to switch accounts.
   if (!item || item.status === "REMOVED") return notFound("Item not found")
 
   const isOwner = item.userId === viewerId
@@ -75,7 +86,7 @@ export async function GET(
     isOwner
       ? Promise.resolve([])
       : prisma.item.findMany({
-          where: { userId: viewerId, status: "AVAILABLE" },
+          where: { userId: viewerId, status: "AVAILABLE", moderationHiddenAt: null },
           select: { id: true, title: true, images: true },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 50,
