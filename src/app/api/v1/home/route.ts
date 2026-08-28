@@ -6,6 +6,7 @@ import { preciseAccessItemIds } from "@/lib/item-visibility"
 import { visibleItemWhere, userNotBlocked } from "@/lib/blocking"
 import { notSuspendedWhere } from "@/lib/moderation"
 import { getLeafRank } from "@/lib/task-constants"
+import { loadEffectiveTiers } from "@/lib/contracts"
 import { ok, unauthenticated, invalid } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape } from "@/lib/v1/query"
 import { decodeCursor, encodeCursor, olderThan, paginate } from "@/lib/v1/cursor"
@@ -17,23 +18,25 @@ export const dynamic = "force-dynamic"
 /**
  * GET /api/v1/home — the whole home tab in one request.
  *
- * EIGHT queries, plain Prisma, no raw SQL. The six-query variant folded the
+ * NINE calls, plain Prisma, no raw SQL. The six-query variant folded the
  * three unread counts into one raw statement with scalar subqueries; that was
  * traded away deliberately. Two saved round trips is not worth a hand-written
  * SQL string in the middle of the hottest screen in the app.
  *
- * The eight:
+ * The nine:
  *   1  viewer row, with their own AVAILABLE item categories nested
  *   2  feed page
  *   3  pickup access for that page
- *   4  trending categories (7-day groupBy)
- *   5  match candidates
- *   6  unread messages
- *   7  unread notifications
- *   8  pending follow requests
+ *   4  trust tiers for that page's owners (three aggregates, run in parallel)
+ *   5  trending categories (7-day groupBy)
+ *   6  match candidates
+ *   7  unread messages
+ *   8  unread notifications
+ *   9  pending follow requests
  *
- * Query 3 is the one that stops this being an N+1: pickup authorisation is
- * resolved for the entire page in a single lookup, not per item.
+ * Queries 3 and 4 are the ones that stop this being an N+1: pickup
+ * authorisation and every owner's tier are each resolved for the entire page in
+ * one lookup, not per item.
  *
  * Deliberately NOT here: impact, tasks, stories, category counts, weekly trades.
  * Those belong to /profile/me and /browse. Pulling them in is what makes the web
@@ -97,7 +100,25 @@ export async function GET(req: NextRequest) {
   // ── 3 ── pickup access for exactly this page. One query, not one per item.
   const access = await preciseAccessItemIds(viewerId, page.map((r) => r.id))
 
-  // ── 4 ── trending: the 7-day category groupBy that four web pages inline.
+  // ── 4 ── trust tiers for this page's owners.
+  //
+  // The badge on every card reads from this and NOT from `owner.totalTrades`,
+  // which is a denormalised counter that has drifted above the real completed
+  // count. Deriving it here also charges DPA defaults against the tier, which
+  // is the difference between a badge that describes someone and a badge that
+  // contradicts the gate they are about to hit: without it a defaulter reads
+  // "Top Trader" right up until the server refuses to let them initiate a
+  // trade. See loadEffectiveTiers() for why it is three aggregates and not
+  // three queries per owner.
+  //
+  // Deduplicated by that function, so a page where one person posted eight of
+  // the twenty listings costs exactly what a page of twenty strangers does.
+  const tiers = await loadEffectiveTiers(
+    prisma,
+    page.map((r) => ({ id: r.user.id, rating: r.user.rating })),
+  )
+
+  // ── 5 ── trending: the 7-day category groupBy that four web pages inline.
   // Blocked owners and moderator-hidden listings are excluded here too. A
   // trending chip is a count of things you can then go and look at; counting
   // listings the next screen refuses to show you makes the chip a lie and,
@@ -114,7 +135,7 @@ export async function GET(req: NextRequest) {
     take: 5,
   })
 
-  // ── 5 ── match candidates.
+  // ── 6 ── match candidates.
   // Suggesting someone you blocked, or who blocked you, as a trading partner is
   // the single most conspicuous way a half-enforced block announces itself.
   const candidates = await prisma.user.findMany({
@@ -137,7 +158,7 @@ export async function GET(req: NextRequest) {
     take: 5,
   })
 
-  // ── 6, 7, 8 ── the unread counts, one call each.
+  // ── 7, 8, 9 ── the unread counts, one call each.
   const unreadMessages = await prisma.message.count({
     where: { receiverId: viewerId, read: false },
   })
@@ -186,7 +207,7 @@ export async function GET(req: NextRequest) {
         notifications: unreadNotifications,
         followRequests,
       },
-      feed: page.map((r) => v1Item(r as unknown as V1ItemRow, viewerId, access)),
+      feed: page.map((r) => v1Item(r as unknown as V1ItemRow, viewerId, access, tiers)),
       trending: trendingRows.map((r) => ({
         category: r.category,
         label: categoryLabel(r.category),

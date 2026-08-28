@@ -1,5 +1,6 @@
 import { resolvePickup, type PublicPickup } from "@/lib/item-visibility"
 import { getLeafRank } from "@/lib/task-constants"
+import type { TrustTier } from "@/lib/reputation"
 import { categoryLabel, conditionLabel } from "./taxonomy"
 
 /**
@@ -79,9 +80,30 @@ export interface V1Owner {
   avatar: string | null
   location: string | null
   rating: number
+  /**
+   * The denormalised counter. STILL SENT, because clients render it as a plain
+   * "N trades" statistic — but it is NOT what `trustTier` is computed from, and
+   * nothing should derive a tier from it. It has drifted above the real
+   * COMPLETED count on live rows. See `loadEffectiveTiers`.
+   */
   totalTrades: number
   lifetimeLeaves: number
+  /** The LEAF ladder — Seedling / Sprout / Grower / Guardian, from earnings. */
   rank: string
+  /**
+   * The TRUST ladder — New / Rising / Trusted / Top Trader, from completed
+   * trades and rating, after DPA defaults are charged against it. This is the
+   * "safe to trade with" signal and it is the same value the contract gates
+   * enforce with, so a badge rendered from it can never promise something the
+   * server will then refuse.
+   *
+   * NULL WHERE THE ENDPOINT DID NOT RESOLVE IT. Deriving it costs three
+   * aggregate queries per page, so a route opts in by passing `tiers` to
+   * v1Item(); /home does. Null means "not computed here", never "New Trader" —
+   * a client must not collapse the two, because the quietest badge on the
+   * ladder is a claim about someone and absence is not.
+   */
+  trustTier: TrustTier | null
 }
 
 export interface V1Item {
@@ -158,11 +180,15 @@ export interface V1ItemRow {
  * `tradeAccessIds` comes from preciseAccessItemIds(). Omitting it is treated as
  * "no trade access", so a caller that forgets it under-shares rather than
  * over-shares — the same fail-safe direction resolvePickup() takes.
+ *
+ * `tiers` comes from loadEffectiveTiers() and follows the same rule: omitting
+ * it yields a null tier rather than a guessed one.
  */
 export function v1Item(
   row: V1ItemRow,
   viewerId: string | null,
   tradeAccessIds?: Set<string>,
+  tiers?: ReadonlyMap<string, TrustTier>,
 ): V1Item {
   return {
     id: row.id,
@@ -188,6 +214,9 @@ export function v1Item(
       totalTrades: row.user.totalTrades,
       lifetimeLeaves: row.user.lifetimeLeaves,
       rank: getLeafRank(row.user.lifetimeLeaves).label,
+      // ?? null, not ?? a default tier. A caller that forgot the map
+      // under-claims rather than inventing a rung for someone.
+      trustTier: tiers?.get(row.user.id) ?? null,
     },
     stats: {
       likes: row._count?.likes ?? 0,

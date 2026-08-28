@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/generated/prisma/client"
 import { DPA } from "@/lib/reputation-config"
+import { getEffectiveTier, type TrustTier } from "@/lib/reputation"
 
 /**
  * Deferred Points Agreements.
@@ -121,6 +122,120 @@ export async function loadDebtorStanding(
     onTimeRate: finished.length === 0 ? null : onTime / finished.length,
     finishedContracts: finished.length,
   }
+}
+
+/**
+ * The EFFECTIVE trust tier for many users at once — what a badge is allowed to
+ * claim about each of them.
+ *
+ * The batched sibling of loadDebtorStanding(). That function answers everything
+ * about ONE debtor in three queries; a feed page needs one number about twenty
+ * people, and twenty times three queries on the hottest endpoint in the app is
+ * not a trade anyone would make. This is the same rules over a whole page in
+ * three queries TOTAL.
+ *
+ * WHY IT IS NOT `getTrustTier(user.totalTrades, user.rating)`. Two reasons,
+ * both of which put a badge and a gate in direct contradiction:
+ *
+ *   1. `User.totalTrades` DRIFTS. It is a denormalised counter and it currently
+ *      sits above the real COMPLETED count on live rows — one user reads 3
+ *      there and has 2 real completed trades, which is the difference between
+ *      "Rising Trader" on their badge and "New Trader" at the gate. Every gate
+ *      in this codebase counts TradeRequest rows instead; so does this.
+ *   2. TIERS ARE CHARGED FOR DPA DEFAULTS and a raw getTrustTier() knows
+ *      nothing about them. An unsettled default floors a user outright. Without
+ *      this, a defaulter with thirty trades wears "Top Trader" while the
+ *      contract gates refuse to let them initiate anything.
+ *
+ * THE SWEEP IS NOT RUN, AND THE LAPSE IS COUNTED ANYWAY. sweepLapsedContracts()
+ * is a WRITE, and a feed read must not issue one per owner per page. Instead an
+ * ACTIVE contract already past its deadline is treated here as the unsettled
+ * default it is about to become — the same condition the sweep tests, evaluated
+ * without persisting anything. That is what keeps the badge honest in the
+ * window between a deadline passing and somebody touching that debtor's
+ * contracts, which on a quiet account can be days. It is safe to leave
+ * `lifetimeDefaults` alone in that window because an unsettled default floors
+ * the tier outright, and the floor is below anything the per-default demotion
+ * could reach.
+ *
+ * `ratings` is passed in rather than queried because every caller already has
+ * it — the owner block selects `rating` — and a fourth query for a column
+ * already in hand is the kind of thing that turns one endpoint into seventeen.
+ */
+export async function loadEffectiveTiers(
+  db: ContractDb,
+  users: readonly { id: string; rating: number }[],
+  now: Date = new Date(),
+): Promise<Map<string, TrustTier>> {
+  const out = new Map<string, TrustTier>()
+  if (users.length === 0) return out
+
+  const ids = [...new Set(users.map((u) => u.id))]
+
+  const [sent, received, defaults] = await Promise.all([
+    // Completed trades, counted from the rows. Prisma cannot group on "either
+    // of two columns", so the two sides are counted separately and added. That
+    // is identical to the single-user count({ OR: [...] }) for every row where
+    // sender and receiver differ, which is every row — a self-trade has no
+    // meaning here and no path in the API creates one.
+    db.tradeRequest.groupBy({
+      by: ["senderId"],
+      where: { status: "COMPLETED", senderId: { in: ids } },
+      _count: { _all: true },
+    }),
+    db.tradeRequest.groupBy({
+      by: ["receiverId"],
+      where: { status: "COMPLETED", receiverId: { in: ids } },
+      _count: { _all: true },
+    }),
+    // One aggregate for both default facts. Grouping by status as well as
+    // debtor is what lets a single pass answer "how many ever" and "is one
+    // outstanding right now" — DEFAULTED rows are the unsettled ones, and a
+    // lapsed ACTIVE row is a DEFAULTED row the sweep has not written yet.
+    db.deferredContract.groupBy({
+      by: ["debtorId", "status"],
+      where: {
+        debtorId: { in: ids },
+        OR: [
+          // Every default that ever happened, including ones since paid off:
+          // `defaultedAt` survives the status going back to FULFILLED, which is
+          // exactly why it and not `status` identifies a past default.
+          { status: { in: ["FULFILLED", "DEFAULTED"] }, defaultedAt: { not: null } },
+          { status: "ACTIVE", deadline: { lt: now } },
+        ],
+      },
+      _count: { _all: true },
+    }),
+  ])
+
+  const trades = new Map<string, number>()
+  for (const row of sent) {
+    trades.set(row.senderId, (trades.get(row.senderId) ?? 0) + row._count._all)
+  }
+  for (const row of received) {
+    trades.set(row.receiverId, (trades.get(row.receiverId) ?? 0) + row._count._all)
+  }
+
+  const lifetimeDefaults = new Map<string, number>()
+  const unsettled = new Set<string>()
+  for (const row of defaults) {
+    lifetimeDefaults.set(row.debtorId, (lifetimeDefaults.get(row.debtorId) ?? 0) + row._count._all)
+    // DEFAULTED is an unpaid default standing right now; ACTIVE only reached
+    // this result set by being past its deadline, which is the same thing one
+    // sweep away.
+    if (row.status === "DEFAULTED" || row.status === "ACTIVE") unsettled.add(row.debtorId)
+  }
+
+  for (const user of users) {
+    out.set(
+      user.id,
+      getEffectiveTier(trades.get(user.id) ?? 0, user.rating, {
+        lifetimeDefaults: lifetimeDefaults.get(user.id) ?? 0,
+        hasUnsettledDefault: unsettled.has(user.id),
+      }),
+    )
+  }
+  return out
 }
 
 // ── The lazy deadline sweep ──────────────────────────────────────────────────
