@@ -46,10 +46,19 @@ export const TASK_ORDER: TaskKey[] = [
 // separately gated.
 export const WEEKLY_TASK_LEAF_CAP = 100
 
-// VERIFIED_SWAP only awards when the counterparty is someone the user has not
-// completed a trade with inside this window. Repeat trades with the same
-// partner still complete normally, they just award nothing — otherwise two
-// users could swap the same two items back and forth and mint Leaves forever.
+// BOTH REPEATABLE TASKS — VERIFIED_SWAP and SAFEZONE_MEETUP — award only when
+// the counterparty is someone the user has not completed a trade with inside
+// this window. Repeat trades with the same partner still complete normally,
+// they just award nothing; otherwise two users could swap the same two items
+// back and forth and mint Leaves forever.
+//
+// SAFEZONE_MEETUP was outside this rule until 28 Aug 2026, which left exactly
+// the faucet the rule exists to prevent: a colluding pair collected 10 Leaves
+// each per trade, capped only by WEEKLY_TASK_LEAF_CAP, i.e. 100 Leaves each per
+// week indefinitely — Guardian rank (300 lifetime) in three weeks. It had never
+// actually been awarded on this database when the gap was found, so no Leaves
+// were minted through it and nothing was clawed back. The enforcing set is
+// PARTNER_GATED in @/lib/tasks; add every future repeatable task to it.
 export const NEW_PARTNER_WINDOW_DAYS = 30
 
 // One-time grant given at account verification — NOT at registration. That

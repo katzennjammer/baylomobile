@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { NextResponse } from "next/server"
+import { MAX_ITEM_HUBS } from "@/lib/safe-zones"
 
 /**
  * Request body schemas.
@@ -142,6 +143,31 @@ const itemPickupFields = {
   pickupAddress: z.string().trim().max(MAX_ADDRESS).nullish(),
 }
 
+/**
+ * The Safe-Zone hubs this listing is offered at.
+ *
+ * SHAPE ONLY. This schema bounds the array and the length of an id; it does NOT
+ * establish that any of these hubs exist or are open, because zod cannot ask
+ * the database. resolveHubIds() in @/lib/safe-zones is the authority on both,
+ * and every write path calls it — a hub id is a foreign key the client chooses,
+ * and an unchecked one either breaks on the constraint or leaves a listing
+ * claiming a meeting place that does not exist.
+ *
+ * OMITTED AND `[]` MEAN DIFFERENT THINGS ON THE UPDATE PATH, and the routes
+ * depend on it: omitted leaves the existing associations alone, `[]` clears
+ * them. Same convention as `localPickup`.
+ *
+ * The cap is bounded here as well as in resolveHubIds() — both read
+ * MAX_ITEM_HUBS, so they cannot drift — because rejecting an over-long array
+ * before it reaches a query is cheaper than after.
+ */
+const itemHubField = {
+  hubIds: z
+    .array(z.string().trim().min(1).max(64))
+    .max(MAX_ITEM_HUBS, `A listing can be offered at at most ${MAX_ITEM_HUBS} Safe-Zone hubs`)
+    .optional(),
+}
+
 export const createItemSchema = z.object({
   title: text(MAX_TITLE).optional(),
   wantedItem: text(MAX_TITLE).optional(),
@@ -153,6 +179,7 @@ export const createItemSchema = z.object({
   wantedItems: optionalText(MAX_WANTED),
   imageHash: z.string().trim().max(128).nullish(),
   ...itemPickupFields,
+  ...itemHubField,
 }).refine((v) => !!(v.title ?? v.wantedItem), {
   message: "title is required",
   path: ["title"],
@@ -168,6 +195,7 @@ export const updateItemSchema = z.object({
   wantedItems: optionalText(MAX_WANTED),
   imageHash: z.string().trim().max(128).nullish(),
   ...itemPickupFields,
+  ...itemHubField,
 })
 
 // ── Offers, trades, messages ─────────────────────────────────────────────────
@@ -206,9 +234,25 @@ export const tradeStatusSchema = z.object({
 
 export const tradeActionSchema = z.object({ action: z.enum(["cancel", "hide"]) })
 
+/**
+ * The swap-confirmation submission.
+ *
+ * `safeZoneHubId` REPLACED `safeZone: boolean`. The old field is still accepted
+ * so a shipped client sending it gets a real error instead of silent
+ * non-payment: this schema is a plain z.object, so an unrecognised key would be
+ * stripped and the request would succeed while quietly doing less than it said.
+ * The route rejects `safeZone: true` without a hub id and explains why -- see
+ * the note there. Sending `safeZone: false` is harmless and ignored.
+ */
 export const confirmSubmitSchema = z.object({
   code: z.string().trim().regex(/^\d{6}$/, "Code must be exactly 6 digits"),
+  /** Deprecated. Accepted only so the route can 400 it with an explanation. */
   safeZone: z.boolean().optional(),
+  /**
+   * Which hub the parties met at. Validated against the table AND against both
+   * traded listings' declared hubs in the route -- shape only, here.
+   */
+  safeZoneHubId: z.string().trim().min(1).max(64).nullish(),
 })
 
 export const createMessageSchema = z.object({

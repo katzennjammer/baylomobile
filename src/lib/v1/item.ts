@@ -1,6 +1,12 @@
 import { resolvePickup, type PublicPickup } from "@/lib/item-visibility"
 import { getLeafRank } from "@/lib/task-constants"
 import type { TrustTier } from "@/lib/reputation"
+import {
+  SAFE_ZONE_HUB_SELECT,
+  v1Hub,
+  type SafeZoneHubRow,
+  type V1Hub,
+} from "@/lib/safe-zones"
 import { categoryLabel, conditionLabel } from "./taxonomy"
 
 /**
@@ -66,6 +72,42 @@ export const V1_ITEM_OWNER_SELECT = {
   lifetimeLeaves: true,
 } as const
 
+/**
+ * The Safe-Zone hubs this listing is offered at.
+ *
+ * A SEPARATE, OPT-IN SELECT rather than part of V1_ITEM_SELECT. Every feed row
+ * would otherwise carry a join it does not render: /home and /browse show a
+ * card, and a card has no room for five meetup points. Detail screens spread
+ * this in; lists do not, and the cost stays where the value is.
+ *
+ * INACTIVE HUBS ARE INCLUDED. That is the whole point of the flag — a listing
+ * offered at a hub that has since closed keeps saying so, and the client
+ * renders it struck through rather than the listing silently losing the only
+ * answer it had to "where would we meet?". Filtering them out here would undo
+ * the guarantee the deactivation path is built around.
+ */
+export const V1_ITEM_SAFEZONE_SELECT = {
+  safeZones: { select: { hub: { select: SAFE_ZONE_HUB_SELECT } } },
+} as const
+
+/**
+ * Hub rows to wire objects: active first, then alphabetical.
+ *
+ * Sorted here rather than in SQL because the set is capped at MAX_ITEM_HUBS and
+ * ordering five items in memory is free, while `orderBy` across a join is one
+ * more thing each call site has to remember to spell the same way.
+ */
+export function v1ItemHubs(
+  rows: { hub: SafeZoneHubRow }[] | undefined,
+): V1Hub[] | null {
+  if (!rows) return null
+  return rows
+    .map((r) => v1Hub(r.hub))
+    .sort((a, b) =>
+      a.isActive === b.isActive ? a.name.localeCompare(b.name) : a.isActive ? -1 : 1,
+    )
+}
+
 /** Like/comment counts, plus whether THIS viewer has liked it. */
 export function v1ItemStatsSelect(viewerId: string) {
   return {
@@ -123,6 +165,18 @@ export interface V1Item {
   status: string
   wanted: string | null
   pickup: PublicPickup | null
+  /**
+   * The public meetup points this listing is offered at.
+   *
+   * NULL MEANS "THIS ENDPOINT DID NOT LOAD THEM", never "none" — the same rule
+   * `trustTier` follows, and for the same reason. An empty ARRAY is the real
+   * answer for a delivery-only or chat-arranged listing, and a client that
+   * collapses the two would render "no meetup points" on every feed card, which
+   * is a claim about the listing that the feed never actually checked.
+   *
+   * Populated only where V1_ITEM_SAFEZONE_SELECT was spread into the query.
+   */
+  safeZones: V1Hub[] | null
   owner: V1Owner
   stats: { likes: number; liked: boolean; comments: number }
   createdAt: Date
@@ -172,6 +226,8 @@ export interface V1ItemRow {
   }
   _count?: { likes: number; comments: number }
   likes?: { id: string }[]
+  /** Present only when V1_ITEM_SAFEZONE_SELECT was spread into the select. */
+  safeZones?: { hub: SafeZoneHubRow }[]
 }
 
 /**
@@ -205,6 +261,9 @@ export function v1Item(
     status: row.status,
     wanted: row.wantedItems ?? null,
     pickup: resolvePickup(row, viewerId, tradeAccessIds),
+    // null when the caller did not select them. See the note on the field: a
+    // caller that forgot under-claims rather than asserting "none".
+    safeZones: v1ItemHubs(row.safeZones),
     owner: {
       id: row.user.id,
       name: row.user.name,

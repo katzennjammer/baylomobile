@@ -285,6 +285,11 @@ model Item {
   likes       PostLike[]     @relation("ItemPostLikes")
   comments    PostComment[]  @relation("ItemPostComments")
   offers      Offer[]        @relation("ItemOffers")
+
+  /// Public meetup points this listing is offered at. ZERO IS NORMAL and means
+  /// delivery-only or arrange-it-in-chat -- it is not an incomplete listing.
+  /// Capped at MAX_ITEM_HUBS by the write paths; see @/lib/safe-zones.
+  safeZones ItemSafeZone[]
 }
 
 model TradeRequest {
@@ -296,7 +301,39 @@ model TradeRequest {
 
   hiddenBySender   Boolean @default(false)
   hiddenByReceiver Boolean @default(false)
-  safeZoneMeetup   Boolean @default(false)
+
+  /// WHICH Safe-Zone hub the parties say they met at. NULL means they did not
+  /// claim one, and it is what the SAFEZONE_MEETUP reward keys off -- the
+  /// reward condition is `safeZoneHubId IS NOT NULL`, not a separate flag.
+  ///
+  /// THIS IS PRE-COMMITTED SELF-ATTESTATION. IT IS NOT VERIFICATION, and the
+  /// distinction is worth stating plainly rather than letting a foreign key
+  /// imply proof:
+  ///
+  ///   What it does NOT establish: that these two people were ever at this
+  ///   place. Nothing here observes the world. A participant who wants the 10
+  ///   Leaves without going to Parkmall types the same request as one who went.
+  ///
+  ///   What it DOES establish: the claim was pre-committed and is mutual. The
+  ///   hub must be one that BOTH traded listings were already publicly offered
+  ///   at, which means both owners independently named it before this trade
+  ///   existed, and the counterparty could see it at offer time. A lie now has
+  ///   to be arranged in advance, by two people, in public, rather than ticked
+  ///   at the end by one of them.
+  ///
+  ///   What replaced what: this used to be `safeZoneMeetup Boolean`, set by
+  ///   either party sending `safeZone: true` at confirmation. That was
+  ///   unfalsifiable and uncorrelated with anything -- an unauditable boolean
+  ///   attached to a currency award.
+  ///
+  /// GPS proximity was considered and deliberately rejected. A client-reported
+  /// coordinate is spoofable from a developer-options toggle, so without device
+  /// attestation it is a more elaborate checkbox; and every seeded hub landmark
+  /// is indoors or under a roof, where GPS routinely drifts 50-200 m, so an
+  /// honest-user-safe radius in a dense commercial strip would cover several
+  /// other hubs anyway. The honest position is the one written above.
+  safeZoneHubId String?
+  safeZoneHub   SafeZoneHub? @relation(fields: [safeZoneHubId], references: [id], onDelete: Restrict)
 
   senderId   String
   sender     User   @relation("SentRequests", fields: [senderId], references: [id])
@@ -884,12 +921,17 @@ enum AdminActionKind {
   LISTING_UNHIDDEN
   USER_SUSPENDED
   USER_UNSUSPENDED
+  HUB_CREATED
+  HUB_UPDATED
+  HUB_DEACTIVATED
+  HUB_REACTIVATED
 }
 
 enum AdminTargetType {
   REPORT
   LISTING
   USER
+  HUB
 }
 
 /**
@@ -936,4 +978,123 @@ model AdminAction {
   @@index([actorId, createdAt])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+// -- Safe-Zone Hubs ----------------------------------------------------------
+
+/// What kind of public place this is. The type drives nothing but display and
+/// filtering today; it exists so "meet at a police station" and "meet at a
+/// mall" are distinguishable to a user deciding where they are comfortable
+/// going, and to us when we look at which kinds of place people actually pick.
+///
+/// SCREAMING_SNAKE here, lower_snake on the wire through the closed map in
+/// @/lib/safe-zones -- the same call Item.valuationSource and ReportCategory
+/// document, and for the same reason: a wire value generated from a database
+/// enum name changes the day somebody renames the enum, and a shipped mobile
+/// client has already parsed the old spelling.
+enum SafeZoneType {
+  MALL
+  BARANGAY_HALL
+  POLICE_STATION
+  PUBLIC_PLAZA
+  TRANSPORT_HUB
+}
+
+/// A curated public meetup point.
+///
+/// THIS MODEL EXISTS INSTEAD OF PLOTTING SELLERS ON A MAP. The alternative --
+/// rendering Item.pickupLat/pickupLng as pins -- publishes an approximate home
+/// address for every seller who offers local pickup, and coarsening the pin
+/// does not fix it: a 1 km circle around a listing that is renewed weekly from
+/// the same house resolves to that house after a few observations. A hub is a
+/// different kind of object. Nobody lives at a mall information desk, so its
+/// coordinate carries no privacy cost to anyone.
+///
+/// WHICH IS WHY THESE COORDINATES ARE PRECISE AND PUBLIC, and must stay that
+/// way. resolvePickup()'s 2-decimal rounding is a rule about SELLERS' homes and
+/// it must never be applied here: a hub rounded to ~1.1 km lands somewhere in
+/// the general vicinity of the mall, which is worse than useless to two people
+/// trying to find each other, and it protects nobody. If you find yourself
+/// reaching for coarsen() on a hub, the bug is the reach, not the precision.
+///
+/// `landmark` is REQUIRED and has no default, deliberately. "Meet at the mall"
+/// is not a meeting point -- a mall has six entrances -- and an optional field
+/// here is a field that is empty on the hubs somebody added in a hurry. The
+/// admin route makes them type it.
+///
+/// DEACTIVATION, NOT DELETION. `isActive` false removes a hub from the picker
+/// and from GET /api/v1/hubs; it does NOT touch the ItemSafeZone rows pointing
+/// at it, and the relation below is Restrict so the database refuses a delete
+/// that would. A listing already offered at a hub that closed keeps saying so,
+/// flagged unavailable, because the alternative is a listing silently losing
+/// the only answer it had to "where would we meet?".
+model SafeZoneHub {
+  id String @id @default(cuid())
+
+  name String       @db.VarChar(120)
+  type SafeZoneType
+
+  address String @db.VarChar(300)
+
+  /// PUBLIC AND PRECISE. See the note above -- never coarsened, never gated.
+  latitude  Float
+  longitude Float
+
+  /// The LGU, as a plain string rather than an enum: the hub list grows city by
+  /// city and adding Consolacion should be an INSERT, not a migration.
+  city String @db.VarChar(80)
+
+  /// The "where exactly" note -- "ground floor, near the information desk".
+  /// Required; see the note above.
+  landmark String @db.VarChar(200)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  items ItemSafeZone[]
+
+  /// Trades whose parties claimed they met here. Restrict on that side too, so
+  /// a hub carrying meetup history is as undeletable as one carrying listings.
+  trades TradeRequest[]
+
+  /// The picker's query: active hubs in one city. Both filter columns, in the
+  /// order the WHERE clause names them.
+  @@index([isActive, city])
+}
+
+/// Item to hub. "I am willing to meet you at any of these places."
+///
+/// COMPOSITE PRIMARY KEY rather than a cuid plus a unique index. The pair IS
+/// the identity of this row -- there is no such thing as two different
+/// associations between the same item and the same hub -- and expressing that
+/// as the PK means a double-tapped save cannot produce a duplicate no matter
+/// what the route does. It also drops one index and one column off what will be
+/// the widest-fanning join in this schema.
+///
+/// onDelete differs on the two sides, and both directions are deliberate:
+///
+///   item -> Cascade.  A deleted listing's associations are meaningless and
+///                     nothing audits them. Item deletion here is a soft delete
+///                     anyway (status = REMOVED), so this fires rarely.
+///
+///   hub  -> Restrict. The database refuses to delete a hub any listing points
+///                     at. This is the enforcement half of "deactivate, never
+///                     delete": a hub row deleted out from under its
+///                     associations would take the listings' only stated
+///                     meeting place with it, and the admin surface exposes no
+///                     delete for exactly this reason. Restrict is what makes
+///                     the rule hold for somebody at a SQL prompt too.
+model ItemSafeZone {
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  hubId String
+  hub   SafeZoneHub @relation(fields: [hubId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@id([itemId, hubId])
+  /// "which listings are offered at this hub" -- GET /api/v1/hubs/[id]/items.
+  /// The PK's leading column already serves the other direction.
+  @@index([hubId])
 }

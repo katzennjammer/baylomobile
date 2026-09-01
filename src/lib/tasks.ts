@@ -26,9 +26,40 @@ type TaskDb = Pick<PrismaClient, "user" | "taskCompletion" | "leafTransaction" |
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/**
+ * Tasks that pay only for a NEW counterparty, judged over
+ * NEW_PARTNER_WINDOW_DAYS.
+ *
+ * THIS IS EVERY REPEATABLE TASK, and it has to stay that way. A repeatable task
+ * without this guard is a faucet two colluding accounts can run forever by
+ * bouncing the same two items between them: each completed trade pays both
+ * sides, and nothing else in the system counts how often the same pair trades.
+ *
+ * SAFEZONE_MEETUP was missing from this rule until 28 Aug 2026. The condition
+ * read `task === "VERIFIED_SWAP"`, so the one repeatable task that was NOT
+ * spelled out went unguarded, and the settlement site did not pass a partnerId
+ * for it either -- two independent omissions that had to agree for the gap to
+ * be invisible. A NAMED SET rather than a comparison is the point of the fix:
+ * the next repeatable task is added to TaskKey and this line is what fails to
+ * mention it, which is easier to notice than a boolean that silently reads
+ * false.
+ *
+ * Measured before the fix: SAFEZONE_MEETUP had never been awarded on this
+ * database, so no Leaves were minted through the gap. See
+ * scripts/analyze-safezone-faucet.ts, and note that nothing was clawed back.
+ */
+const PARTNER_GATED: ReadonlySet<TaskKey> = new Set(["VERIFIED_SWAP", "SAFEZONE_MEETUP"])
+
 export interface AwardResult {
   awarded: number
-  reason:  "awarded" | "already_awarded" | "weekly_cap" | "repeat_partner" | "error"
+  reason:
+    | "awarded"
+    | "already_awarded"
+    | "weekly_cap"
+    | "repeat_partner"
+    /** A partner-gated task was awarded without a partnerId. See PARTNER_GATED. */
+    | "missing_partner"
+    | "error"
 }
 
 const nothing = (reason: AwardResult["reason"]): AwardResult => ({ awarded: 0, reason })
@@ -140,8 +171,25 @@ export async function awardTask(
     })
     if (existing) return nothing("already_awarded")
 
-    // Faucet guard 1 — VERIFIED_SWAP only pays for a genuinely new counterparty.
-    if (task === "VERIFIED_SWAP" && opts.partnerId) {
+    // Faucet guard 1 — a partner-gated task pays only for a genuinely new
+    // counterparty. See PARTNER_GATED above for which tasks those are and why
+    // the set is named rather than compared against inline.
+    if (PARTNER_GATED.has(task)) {
+      // FAIL CLOSED. The old condition was `task === "VERIFIED_SWAP" &&
+      // opts.partnerId`, which meant a call site that forgot the partner
+      // silently SKIPPED the guard and paid out -- and that is precisely half
+      // of how the SAFEZONE_MEETUP gap stayed invisible. A partner-gated task
+      // with no partner is a bug in the caller, and the safe answer to a bug in
+      // the caller is to pay nothing.
+      //
+      // NO ZERO-LEAF COMPLETION ROW IS WRITTEN HERE, unlike the two denials
+      // below, and the difference matters: those two are RULES the award lost
+      // against, and recording them is what makes the denial permanent. This is
+      // a defect. Leaving no row means reconcileTasks() will pay the award
+      // properly once the call site is fixed, instead of the bug being frozen
+      // into the ledger as a permanent denial.
+      if (!opts.partnerId) return nothing("missing_partner")
+
       const fresh = await isNewTradePartner(db, userId, opts.partnerId, opts.tradeId ?? refId, opts.tradeAt ?? eventAt)
       if (!fresh) {
         // Record the zero so this trade is never revisited.
@@ -235,7 +283,10 @@ export function awardTaskAsync(
  *   COMPLETE_PROFILE — avatar, bio and location all filled in.
  *   FIRST_LISTING    — has listed at least one item.
  *   VERIFIED_SWAP    — once per COMPLETED trade, new counterparty only.
- *   SAFEZONE_MEETUP  — once per COMPLETED trade flagged safeZoneMeetup.
+ *   SAFEZONE_MEETUP  — once per COMPLETED trade naming a safeZoneHubId, and
+ *                      like VERIFIED_SWAP, only for a counterparty new inside
+ *                      NEW_PARTNER_WINDOW_DAYS. Both repeatable tasks carry the
+ *                      same guard; see PARTNER_GATED.
  */
 export async function reconcileTasks(userId: string): Promise<TasksStatus | null> {
   const [user, firstItem, completedTrades, existing] = await Promise.all([
@@ -249,7 +300,7 @@ export async function reconcileTasks(userId: string): Promise<TasksStatus | null
     }),
     prisma.tradeRequest.findMany({
       where:  { OR: [{ senderId: userId }, { receiverId: userId }], status: "COMPLETED" },
-      select: { id: true, safeZoneMeetup: true, senderId: true, receiverId: true, updatedAt: true },
+      select: { id: true, safeZoneHubId: true, senderId: true, receiverId: true, updatedAt: true },
     }),
     prisma.taskCompletion.findMany({
       where:  { userId },
@@ -273,7 +324,11 @@ export async function reconcileTasks(userId: string): Promise<TasksStatus | null
   for (const t of completedTrades) {
     const partnerId = t.senderId === userId ? t.receiverId : t.senderId
     eligible.push({ task: "VERIFIED_SWAP", refId: t.id, partnerId, eventAt: t.updatedAt })
-    if (t.safeZoneMeetup) eligible.push({ task: "SAFEZONE_MEETUP", refId: t.id, eventAt: t.updatedAt })
+    // partnerId on BOTH, for the same reason: both are repeatable and both are
+    // partner-gated. The backfill must apply the identical rule to the live
+    // path or it becomes a way to collect an award the live path refused --
+    // simply by waiting and loading the tasks screen.
+    if (t.safeZoneHubId) eligible.push({ task: "SAFEZONE_MEETUP", refId: t.id, partnerId, eventAt: t.updatedAt })
   }
 
   const have = new Set(existing.map((c) => `${c.task}:${c.refId}`))

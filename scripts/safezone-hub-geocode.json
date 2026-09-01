@@ -1,0 +1,901 @@
+{
+  "source": "Nominatim (OpenStreetMap)",
+  "endpoint": "https://nominatim.openstreetmap.org/search",
+  "retrievedAt": "2026-08-28T12:31:45.909Z",
+  "userAgent": "baylo-safezone-hub-geocoder/1.0 (Baylo marketplace; one-off seed verification)",
+  "note": "NOT_FOUND entries carry null coordinates and MUST be filled in by hand. No AI-recalled coordinate was substituted for any failed lookup.",
+  "records": [
+    {
+      "id": "szh-llc-gaisano-grand-mactan",
+      "name": "Gaisano Grand Mall Mactan",
+      "city": "Lapu-Lapu City",
+      "query": "Gaisano Grand Mall Mactan, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.2864854,
+      "longitude": 123.9702185,
+      "displayName": "Gaisano Grand Mall Mactan, Basak-Sisi-Agus Road, Colinwood Subdivision, Agus, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 47026589,
+      "placeClass": null,
+      "placeType": "mall",
+      "resultCount": 3,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.2864854,
+          "lng": 123.9702185,
+          "displayName": "Gaisano Grand Mall Mactan, Basak-Sisi-Agus Road, Colinwood Subdivision, Agus, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 47026589,
+          "placeClass": null,
+          "placeType": "mall"
+        },
+        {
+          "lat": 10.2858654,
+          "lng": 123.9694911,
+          "displayName": "BPI, Basak-Sisi-Agus Road, Colinwood Subdivision, Agus, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 4727288092,
+          "placeClass": null,
+          "placeType": "bank"
+        },
+        {
+          "lat": 10.2859987,
+          "lng": 123.9699176,
+          "displayName": "오션스파, Basak-Sisi-Agus Road, Colinwood Subdivision, Agus, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 4931768421,
+          "placeClass": null,
+          "placeType": "massage"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-island-central-mactan",
+      "name": "Island Central Mactan",
+      "city": "Lapu-Lapu City",
+      "query": "Island Central Mactan, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3267415,
+      "longitude": 123.9757369,
+      "displayName": "Island Central, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 1230770153,
+      "placeClass": null,
+      "placeType": "mall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 0.67,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3267415,
+          "lng": 123.9757369,
+          "displayName": "Island Central, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 1230770153,
+          "placeClass": null,
+          "placeType": "mall"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-marina-mall",
+      "name": "Marina Mall Mactan",
+      "city": "Lapu-Lapu City",
+      "query": "Marina Mall Mactan, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.3261311,
+      "longitude": 123.9774859,
+      "displayName": "Marina Mall, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 134726472,
+      "placeClass": null,
+      "placeType": "retail",
+      "resultCount": 5,
+      "strategy": "bounded-name",
+      "nameAgreement": 0.67,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3261311,
+          "lng": 123.9774859,
+          "displayName": "Marina Mall, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 134726472,
+          "placeClass": null,
+          "placeType": "retail"
+        },
+        {
+          "lat": 10.3262662,
+          "lng": 123.9774621,
+          "displayName": "Marina Mall, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 13779441611,
+          "placeClass": null,
+          "placeType": "bus_stop"
+        },
+        {
+          "lat": 10.3263203,
+          "lng": 123.9778215,
+          "displayName": "Rose Pharmacy, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 7328646085,
+          "placeClass": null,
+          "placeType": "pharmacy"
+        },
+        {
+          "lat": 10.3261748,
+          "lng": 123.9774365,
+          "displayName": "Emcor, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 2946959044,
+          "placeClass": null,
+          "placeType": "department_store"
+        },
+        {
+          "lat": 10.3260146,
+          "lng": 123.9771419,
+          "displayName": "Chowking, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 12470996301,
+          "placeClass": null,
+          "placeType": "fast_food"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-city-hall-grounds",
+      "name": "Lapu-Lapu City Hall Grounds",
+      "city": "Lapu-Lapu City",
+      "query": "Lapu-Lapu City Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.3164608,
+      "longitude": 123.9652281,
+      "displayName": "Lapu Lapu City Hall, Sangi New Road, Matumbo, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 299453044,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 3,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3164608,
+          "lng": 123.9652281,
+          "displayName": "Lapu Lapu City Hall, Sangi New Road, Matumbo, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 299453044,
+          "placeClass": null,
+          "placeType": "townhall"
+        },
+        {
+          "lat": 10.3183445,
+          "lng": 123.9635816,
+          "displayName": "Lapu-Lapu City Hall, Manuel L. Quezon National Highway, Pasancepajo, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 13779441618,
+          "placeClass": null,
+          "placeType": "bus_stop"
+        },
+        {
+          "lat": 10.3185358,
+          "lng": 123.964275,
+          "displayName": "Lapu-Lapu City Hall, Manuel L. Quezon National Highway, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 13779441619,
+          "placeClass": null,
+          "placeType": "bus_stop"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-police-station",
+      "name": "Lapu-Lapu City Police Station",
+      "city": "Lapu-Lapu City",
+      "query": "Lapu-Lapu City Police Station, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.3108407,
+      "longitude": 123.9498208,
+      "displayName": "Lapu-lapu City Police Station № 3, S. Osmeña Street, Langob, Poblacion, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 853708376,
+      "placeClass": null,
+      "placeType": "police",
+      "resultCount": 3,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3108407,
+          "lng": 123.9498208,
+          "displayName": "Lapu-lapu City Police Station № 3, S. Osmeña Street, Langob, Poblacion, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 853708376,
+          "placeClass": null,
+          "placeType": "police"
+        },
+        {
+          "lat": 10.3244744,
+          "lng": 123.9742539,
+          "displayName": "Lapulapu Police City Station № 5, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 4795960628,
+          "placeClass": null,
+          "placeType": "police"
+        },
+        {
+          "lat": 10.2757425,
+          "lng": 123.9752055,
+          "displayName": "Lapu-Lapu City Police Station 4, Basak - Marigondon Road, Marigondon, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "node",
+          "osmId": 4795961231,
+          "placeClass": null,
+          "placeType": "police"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-mactan-shrine",
+      "name": "Mactan Shrine (Liberty Shrine)",
+      "city": "Lapu-Lapu City",
+      "query": "Mactan Shrine, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3109738,
+      "longitude": 124.015138,
+      "displayName": "Liberty Shrine, Mactan, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 538178017,
+      "placeClass": null,
+      "placeType": "park",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3109738,
+          "lng": 124.015138,
+          "displayName": "Liberty Shrine, Mactan, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 538178017,
+          "placeClass": null,
+          "placeType": "park"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-mcia-terminal-1",
+      "name": "Mactan-Cebu International Airport Terminal 1",
+      "city": "Lapu-Lapu City",
+      "query": "Mactan-Cebu International Airport, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3103399,
+      "longitude": 123.9793061,
+      "displayName": "Mactan–Cebu International Airport, Manuel L. Quezon National Highway, Ibo, Lapu-Lapu, Central Visayas, 6016, Philippines",
+      "osmType": "relation",
+      "osmId": 4040104,
+      "placeClass": null,
+      "placeType": "aerodrome",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3103399,
+          "lng": 123.9793061,
+          "displayName": "Mactan–Cebu International Airport, Manuel L. Quezon National Highway, Ibo, Lapu-Lapu, Central Visayas, 6016, Philippines",
+          "osmType": "relation",
+          "osmId": 4040104,
+          "placeClass": null,
+          "placeType": "aerodrome"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-brgy-basak",
+      "name": "Barangay Basak Hall (Lapu-Lapu)",
+      "city": "Lapu-Lapu City",
+      "query": "Barangay Basak Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.2861217,
+      "longitude": 123.870423,
+      "displayName": "Basak San Nicolas Barangay Hall, L. Gabuya Street, Bamboo, Basak San Nicolas, Cebu City, Central Visayas, 6000, Philippines",
+      "osmType": "way",
+      "osmId": 162320708,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 4,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": false,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.2861217,
+          "lng": 123.870423,
+          "displayName": "Basak San Nicolas Barangay Hall, L. Gabuya Street, Bamboo, Basak San Nicolas, Cebu City, Central Visayas, 6000, Philippines",
+          "osmType": "way",
+          "osmId": 162320708,
+          "placeClass": null,
+          "placeType": "townhall"
+        },
+        {
+          "lat": 10.2897235,
+          "lng": 123.8652708,
+          "displayName": "Basak Pardo Barangay Hall, Jumalon Street, Aguila Village, Basak Pardo, Cebu City, Central Visayas, 6000, Philippines",
+          "osmType": "way",
+          "osmId": 617155925,
+          "placeClass": null,
+          "placeType": "townhall"
+        },
+        {
+          "lat": 10.297509,
+          "lng": 123.9647115,
+          "displayName": "Basak Barangay Hall, Pajo-Basak-Marigondon Road, Santo Niño Village, Basak, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 305838927,
+          "placeClass": null,
+          "placeType": "townhall"
+        },
+        {
+          "lat": 10.3546345,
+          "lng": 123.9501008,
+          "displayName": "Basak Barangay Hall, M.C. Briones Street, Consuelo Village, Basak, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 459338012,
+          "placeClass": null,
+          "placeType": "government"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-brgy-pajo",
+      "name": "Barangay Pajo Hall",
+      "city": "Lapu-Lapu City",
+      "query": "Barangay Pajo Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3124415,
+      "longitude": 123.9591409,
+      "displayName": "Pajo Barangay Hall, Pasancepajo, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 1158069630,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3124415,
+          "lng": 123.9591409,
+          "displayName": "Pajo Barangay Hall, Pasancepajo, Pajo, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 1158069630,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-brgy-pusok",
+      "name": "Barangay Pusok Hall",
+      "city": "Lapu-Lapu City",
+      "query": "Barangay Pusok Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3244336,
+      "longitude": 123.9742868,
+      "displayName": "Pusok Barangay Hall, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 470944536,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3244336,
+          "lng": 123.9742868,
+          "displayName": "Pusok Barangay Hall, Manuel L. Quezon National Highway, Pusok, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 470944536,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-brgy-gun-ob",
+      "name": "Barangay Gun-ob Hall",
+      "city": "Lapu-Lapu City",
+      "query": "Barangay Gun-ob Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3019051,
+      "longitude": 123.9505794,
+      "displayName": "Gun-ob Barangay Hall, A. Tumulak Street, Sunrise Village, Gun-ob, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 1152581122,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3019051,
+          "lng": 123.9505794,
+          "displayName": "Gun-ob Barangay Hall, A. Tumulak Street, Sunrise Village, Gun-ob, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 1152581122,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-llc-brgy-marigondon",
+      "name": "Barangay Marigondon Hall",
+      "city": "Lapu-Lapu City",
+      "query": "Barangay Marigondon Hall, Lapu-Lapu City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.275856,
+      "longitude": 123.9753218,
+      "displayName": "Marigondon Barangay Hall, Basak - Marigondon Road, Marigondon, Lapu-Lapu, Central Visayas, 6015, Philippines",
+      "osmType": "way",
+      "osmId": 364382172,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.275856,
+          "lng": 123.9753218,
+          "displayName": "Marigondon Barangay Hall, Basak - Marigondon Road, Marigondon, Lapu-Lapu, Central Visayas, 6015, Philippines",
+          "osmType": "way",
+          "osmId": 364382172,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-parkmall",
+      "name": "Parkmall",
+      "city": "Mandaue City",
+      "query": "Parkmall, Mandaue City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.32509,
+      "longitude": 123.9342371,
+      "displayName": "Parkmall, City South Special Economic Administrative Zone, Mandaue, Central Visayas, Philippines",
+      "osmType": "way",
+      "osmId": 921890771,
+      "placeClass": null,
+      "placeType": "retail",
+      "resultCount": 10,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.32509,
+          "lng": 123.9342371,
+          "displayName": "Parkmall, City South Special Economic Administrative Zone, Mandaue, Central Visayas, Philippines",
+          "osmType": "way",
+          "osmId": 921890771,
+          "placeClass": null,
+          "placeType": "retail"
+        },
+        {
+          "lat": 10.3246381,
+          "lng": 123.9330071,
+          "displayName": "Parkmall, F.F. Cruz Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 13779441626,
+          "placeClass": null,
+          "placeType": "bus_stop"
+        },
+        {
+          "lat": 10.3252024,
+          "lng": 123.9351277,
+          "displayName": "Choobi-Choobi Parkmall, C. D. Seno Street, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 8558700920,
+          "placeClass": null,
+          "placeType": "restaurant"
+        },
+        {
+          "lat": 10.3249247,
+          "lng": 123.9353056,
+          "displayName": "Jollibee, Ouano Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 216451866,
+          "placeClass": null,
+          "placeType": "fast_food"
+        },
+        {
+          "lat": 10.3257535,
+          "lng": 123.9346749,
+          "displayName": "Siknoy, C. D. Seno Street, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 6435119785,
+          "placeClass": null,
+          "placeType": "restaurant"
+        },
+        {
+          "lat": 10.3244789,
+          "lng": 123.934616,
+          "displayName": "Hilot Healing Spa, Ouano Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 4340931130,
+          "placeClass": null,
+          "placeType": "massage"
+        },
+        {
+          "lat": 10.3253137,
+          "lng": 123.9330649,
+          "displayName": "EastWest Unibank, F.F. Cruz Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 8562640401,
+          "placeClass": null,
+          "placeType": "bank"
+        },
+        {
+          "lat": 10.3245072,
+          "lng": 123.934638,
+          "displayName": "Nuat Thai, Ouano Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 4340930604,
+          "placeClass": null,
+          "placeType": "massage"
+        },
+        {
+          "lat": 10.32581,
+          "lng": 123.9346322,
+          "displayName": "Moon Cafe, C. D. Seno Street, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 2257949006,
+          "placeClass": null,
+          "placeType": "restaurant"
+        },
+        {
+          "lat": 10.3258756,
+          "lng": 123.9347291,
+          "displayName": "CycleLogic, C. D. Seno Street, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 8608949607,
+          "placeClass": null,
+          "placeType": "bicycle"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-j-centre-mall",
+      "name": "J Centre Mall",
+      "city": "Mandaue City",
+      "query": "J Centre Mall, Mandaue City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3357102,
+      "longitude": 123.9344709,
+      "displayName": "SM City JMall, 165, V. Albano Street, Bakilid, Mandaue, Central Visayas, 6014, Philippines",
+      "osmType": "way",
+      "osmId": 821829490,
+      "placeClass": null,
+      "placeType": "mall",
+      "resultCount": 1,
+      "strategy": "full-query",
+      "nameAgreement": 0,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3357102,
+          "lng": 123.9344709,
+          "displayName": "SM City JMall, 165, V. Albano Street, Bakilid, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 821829490,
+          "placeClass": null,
+          "placeType": "mall"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-pacific-mall",
+      "name": "Pacific Mall Metro Mandaue",
+      "city": "Mandaue City",
+      "query": "Pacific Mall Metro Mandaue, Mandaue City, Cebu, Philippines",
+      "confidence": "NOT_FOUND",
+      "latitude": null,
+      "longitude": null,
+      "displayName": null,
+      "osmType": null,
+      "osmId": null,
+      "placeClass": null,
+      "placeType": null,
+      "resultCount": 0,
+      "strategy": null,
+      "nameAgreement": null,
+      "cityMatches": null,
+      "verdict": "MISSING",
+      "candidates": []
+    },
+    {
+      "id": "szh-mnd-city-hall-grounds",
+      "name": "Mandaue City Hall Grounds",
+      "city": "Mandaue City",
+      "query": "Mandaue City Hall, Mandaue City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3274247,
+      "longitude": 123.943322,
+      "displayName": "Mandaue Presidencia, P. Burgos Street, Centro, Mandaue, Central Visayas, 6014, Philippines",
+      "osmType": "way",
+      "osmId": 327697305,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "full-query",
+      "nameAgreement": 0.33,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3274247,
+          "lng": 123.943322,
+          "displayName": "Mandaue Presidencia, P. Burgos Street, Centro, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 327697305,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-police-office",
+      "name": "Mandaue City Police Office",
+      "city": "Mandaue City",
+      "query": "Mandaue City Police Office, Mandaue City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.3247758,
+      "longitude": 123.9421322,
+      "displayName": "Mandaue City Police Office, Don Andres Soriano Avenue, Centro, Mandaue, Central Visayas, 6014, Philippines",
+      "osmType": "way",
+      "osmId": 459318987,
+      "placeClass": null,
+      "placeType": "police",
+      "resultCount": 2,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3247758,
+          "lng": 123.9421322,
+          "displayName": "Mandaue City Police Office, Don Andres Soriano Avenue, Centro, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 459318987,
+          "placeClass": null,
+          "placeType": "police"
+        },
+        {
+          "lat": 10.3244514,
+          "lng": 123.9418984,
+          "displayName": "Mandaue City Police Office, Don Andres Soriano Avenue, Centro, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 13769775026,
+          "placeClass": null,
+          "placeType": "bus_stop"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-plaza-mandaue",
+      "name": "Plaza Mandaue",
+      "city": "Mandaue City",
+      "query": "Plaza Mandaue, Mandaue City, Cebu, Philippines",
+      "confidence": "AMBIGUOUS",
+      "latitude": 10.3379168,
+      "longitude": 123.9429544,
+      "displayName": "Diamond Plaza, Maguikay, Mandaue, Central Visayas, Philippines",
+      "osmType": "way",
+      "osmId": 208811862,
+      "placeClass": null,
+      "placeType": "retail",
+      "resultCount": 6,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.3379168,
+          "lng": 123.9429544,
+          "displayName": "Diamond Plaza, Maguikay, Mandaue, Central Visayas, Philippines",
+          "osmType": "way",
+          "osmId": 208811862,
+          "placeClass": null,
+          "placeType": "retail"
+        },
+        {
+          "lat": 10.3272226,
+          "lng": 123.9430582,
+          "displayName": "Mandaue Plaza, Centro, Mandaue, Central Visayas, Philippines",
+          "osmType": "way",
+          "osmId": 459313363,
+          "placeClass": null,
+          "placeType": "square"
+        },
+        {
+          "lat": 10.3138919,
+          "lng": 123.9257589,
+          "displayName": "Lucky Plaza, Ouano Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6666, Philippines",
+          "osmType": "way",
+          "osmId": 921973709,
+          "placeClass": null,
+          "placeType": "commercial"
+        },
+        {
+          "lat": 10.313607,
+          "lng": 123.927491,
+          "displayName": "Badminton Plaza, Doctor F.E. Zuellig Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6666, Philippines",
+          "osmType": "node",
+          "osmId": 413986516,
+          "placeClass": null,
+          "placeType": "pitch"
+        },
+        {
+          "lat": 10.3318685,
+          "lng": 123.9461154,
+          "displayName": "Citybridge Plaza, P. Burgos Street, Sudlon, Alang-alang, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "way",
+          "osmId": 891175233,
+          "placeClass": null,
+          "placeType": "yes"
+        },
+        {
+          "lat": 10.3167191,
+          "lng": 123.9339478,
+          "displayName": "Boardwalk Plaza, Doctor F.E. Zuellig Avenue, City South Special Economic Administrative Zone, Mandaue, Central Visayas, 6666, Philippines",
+          "osmType": "node",
+          "osmId": 413986522,
+          "placeClass": null,
+          "placeType": "mall"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-north-bus-terminal",
+      "name": "Cebu North Bus Terminal",
+      "city": "Mandaue City",
+      "query": "Cebu North Bus Terminal, Mandaue City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.310964,
+      "longitude": 123.920819,
+      "displayName": "Cebu North Bus Terminal, Kaohsiung Street, Carreta, Cebu City, Central Visayas, 6000, Philippines",
+      "osmType": "way",
+      "osmId": 1154306407,
+      "placeClass": null,
+      "placeType": "bus_station",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": false,
+      "verdict": "REVIEW",
+      "candidates": [
+        {
+          "lat": 10.310964,
+          "lng": 123.920819,
+          "displayName": "Cebu North Bus Terminal, Kaohsiung Street, Carreta, Cebu City, Central Visayas, 6000, Philippines",
+          "osmType": "way",
+          "osmId": 1154306407,
+          "placeClass": null,
+          "placeType": "bus_station"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-brgy-subangdaku",
+      "name": "Barangay Subangdaku Hall",
+      "city": "Mandaue City",
+      "query": "Barangay Subangdaku Hall, Mandaue City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3199895,
+      "longitude": 123.925451,
+      "displayName": "Subangdaku Barangay Hall, S. O. Albaño Street, Subangdaku, Mandaue, Central Visayas, 6666, Philippines",
+      "osmType": "way",
+      "osmId": 1172887645,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3199895,
+          "lng": 123.925451,
+          "displayName": "Subangdaku Barangay Hall, S. O. Albaño Street, Subangdaku, Mandaue, Central Visayas, 6666, Philippines",
+          "osmType": "way",
+          "osmId": 1172887645,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    },
+    {
+      "id": "szh-mnd-brgy-tipolo",
+      "name": "Barangay Tipolo Hall",
+      "city": "Mandaue City",
+      "query": "Barangay Tipolo Hall, Mandaue City, Cebu, Philippines",
+      "confidence": "NOT_FOUND",
+      "latitude": null,
+      "longitude": null,
+      "displayName": null,
+      "osmType": null,
+      "osmId": null,
+      "placeClass": null,
+      "placeType": null,
+      "resultCount": 0,
+      "strategy": null,
+      "nameAgreement": null,
+      "cityMatches": null,
+      "verdict": "MISSING",
+      "candidates": []
+    },
+    {
+      "id": "szh-mnd-brgy-banilad",
+      "name": "Barangay Banilad Hall (Mandaue)",
+      "city": "Mandaue City",
+      "query": "Barangay Banilad Hall, Mandaue City, Cebu, Philippines",
+      "confidence": "EXACT",
+      "latitude": 10.3394727,
+      "longitude": 123.9224891,
+      "displayName": "Banilad Barangay Hall, A. S. Fortuna Street, Saint Martin Village, Banilad, Mandaue, Central Visayas, 6014, Philippines",
+      "osmType": "node",
+      "osmId": 7713208614,
+      "placeClass": null,
+      "placeType": "townhall",
+      "resultCount": 1,
+      "strategy": "bounded-name",
+      "nameAgreement": 1,
+      "cityMatches": true,
+      "verdict": "ACCEPT",
+      "candidates": [
+        {
+          "lat": 10.3394727,
+          "lng": 123.9224891,
+          "displayName": "Banilad Barangay Hall, A. S. Fortuna Street, Saint Martin Village, Banilad, Mandaue, Central Visayas, 6014, Philippines",
+          "osmType": "node",
+          "osmId": 7713208614,
+          "placeClass": null,
+          "placeType": "townhall"
+        }
+      ]
+    }
+  ]
+}

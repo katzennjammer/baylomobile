@@ -10,6 +10,46 @@ import {
   preciseAccessItemIds,
   shapeItem,
 } from "@/lib/item-visibility"
+import {
+  SAFE_ZONE_HUB_SELECT,
+  resolveHubIds,
+  setItemHubs,
+  v1Hub,
+  type SafeZoneHubRow,
+} from "@/lib/safe-zones"
+
+/**
+ * The item plus its hub associations, shaped for the wire.
+ *
+ * `safeZones` is peeled off and rebuilt rather than left to shapeItem()'s
+ * spread, which would ship the raw `{ hub: { … } }` join shape straight to a
+ * client. Same discipline as that function's explicit deletion of the pickup
+ * columns: what goes on the wire is constructed, never inherited.
+ *
+ * INACTIVE HUBS STAY IN. A listing offered at a hub that has since closed keeps
+ * saying so, carrying `isActive: false`, and the client strikes it through.
+ * Filtering here would make deactivation silently rewrite other people's
+ * listings, which is the one thing it is not allowed to do.
+ */
+function shapeItemWithHubs<T extends { safeZones: { hub: unknown }[] }>(
+  row: T,
+  viewerId: string | null | undefined,
+  tradeAccessIds?: Set<string>,
+) {
+  const { safeZones, ...rest } = row
+  return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...shapeItem(rest as any, viewerId, tradeAccessIds),
+    safeZones: safeZones.map((s) => v1Hub(s.hub as SafeZoneHubRow)),
+  }
+}
+
+/** The select every handler here uses: the public columns plus the hub join. */
+const ITEM_WITH_HUBS_SELECT = {
+  ...ITEM_PUBLIC_SELECT,
+  user: { select: ITEM_PUBLIC_USER_SELECT },
+  safeZones: { select: { hub: { select: SAFE_ZONE_HUB_SELECT } } },
+} as const
 
 /** Statuses a non-owner may read. REMOVED and TRADED listings are not public. */
 const READABLE_BY_OTHERS = ["AVAILABLE", "IN_TRADE"] as const
@@ -25,7 +65,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     const { id } = await ctx.params
     const item = await prisma.item.findUnique({
       where: { id },
-      select: { ...ITEM_PUBLIC_SELECT, user: { select: ITEM_PUBLIC_USER_SELECT } },
+      select: ITEM_WITH_HUBS_SELECT,
     })
     if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
@@ -51,7 +91,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     // 404 rather than 403: a hidden listing should not confirm its own existence.
     if (!readable) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    return NextResponse.json(shapeItem(item, viewerId, access))
+    return NextResponse.json(shapeItemWithHubs(item, viewerId, access))
   } catch {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
@@ -69,7 +109,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     // not send would bound it by the wrong band.
     const item = await prisma.item.findUnique({
       where: { id },
-      select: { userId: true, category: true, condition: true, valueLeaves: true },
+      select: {
+        userId: true, category: true, condition: true, valueLeaves: true,
+        // The hubs this listing ALREADY has. Needed by resolveHubIds() below,
+        // which permits a deactivated hub to be RETAINED but not newly added --
+        // see the long note on that function for why the symmetric rule makes
+        // every affected listing uneditable.
+        safeZones: { select: { hubId: true } },
+      },
     })
     if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 })
     if (item.userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
@@ -116,6 +163,20 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       valuationData = valued.data
     }
 
+    // ── Safe-Zone hubs ──────────────────────────────────────────────────────
+    // Omitted leaves the associations alone; `[]` clears them. Same convention
+    // as `localPickup` below, and it matters here for a specific reason: a
+    // client PATCHing only the title must not have its listing silently
+    // stripped of every meetup point it had.
+    const hubsTouched = body.hubIds !== undefined
+    const currentHubIds = item.safeZones.map((s) => s.hubId)
+    const hubs = hubsTouched
+      ? await resolveHubIds(prisma, body.hubIds!, currentHubIds)
+      : null
+    if (hubs && !hubs.ok) {
+      return NextResponse.json({ error: hubs.message }, { status: 400 })
+    }
+
     // Pickup is only rewritten when the request actually says something about
     // it. `localPickup: false` clears it; omitting the field leaves it alone.
     const pickupTouched = body.localPickup !== undefined
@@ -146,10 +207,31 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
             : { pickupLat: null, pickupLng: null, pickupAddress: null }
           : {}),
       },
-      select: { ...ITEM_PUBLIC_SELECT, user: { select: ITEM_PUBLIC_USER_SELECT } },
+      select: ITEM_WITH_HUBS_SELECT,
     })
 
-    return NextResponse.json(shapeItem(updated, session.user.id))
+    // The hub rewrite is a separate statement because it is a delete-then-
+    // insert over a join table, which `update` cannot express in one `data`.
+    // In a TRANSACTION with nothing else, on purpose: this is not atomic with
+    // the column update above, and it does not need to be. The two failure
+    // modes are "the title changed but the hubs did not" and "vice versa", both
+    // of which the owner can see and fix from the edit screen. Wrapping the
+    // whole PATCH in a transaction to buy that would put a valuation query --
+    // which reads comparables across the whole Item table -- inside a write
+    // transaction on the hottest table here, and a slow write transaction is a
+    // lock-wait timeout waiting for a busy evening.
+    if (hubs?.ok) {
+      await prisma.$transaction((tx) => setItemHubs(tx, id, hubs.hubIds))
+    }
+
+    // Re-read only when the hubs actually moved: the `updated` row above was
+    // selected before the join was rewritten, so its safeZones are stale in
+    // exactly that case and correct in every other.
+    const finalRow = hubs?.ok
+      ? await prisma.item.findUniqueOrThrow({ where: { id }, select: ITEM_WITH_HUBS_SELECT })
+      : updated
+
+    return NextResponse.json(shapeItemWithHubs(finalRow, session.user.id))
   } catch {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }

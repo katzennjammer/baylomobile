@@ -11,6 +11,12 @@ import {
   preciseAccessItemIds,
   shapeItem,
 } from "@/lib/item-visibility"
+import {
+  SAFE_ZONE_HUB_SELECT,
+  resolveHubIds,
+  v1Hub,
+  type SafeZoneHubRow,
+} from "@/lib/safe-zones"
 
 export async function GET(req: NextRequest) {
   try {
@@ -113,6 +119,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // ── Safe-Zone hubs ──────────────────────────────────────────────────────
+    // Validated against the table BEFORE the item is created, so a bad hub id
+    // is a 400 with nothing written rather than an orphaned listing plus a
+    // failed association. No `currentHubIds` here: nothing exists yet to
+    // retain, so every hub named must be active.
+    const hubs = await resolveHubIds(prisma, body.hubIds ?? [])
+    if (!hubs.ok) return NextResponse.json({ error: hubs.message }, { status: 400 })
+
     // Pickup goes to its own columns. It is no longer folded into wantedItems,
     // which is now the free text it was always named for.
     const hasPickup =
@@ -136,8 +150,19 @@ export async function POST(req: NextRequest) {
             }
           : {}),
         ...(body.imageHash ? { imageHash: body.imageHash } : {}),
+        // Written inline with the item rather than in a second statement: a
+        // listing that exists without the hubs its owner picked is a listing
+        // that quietly lost them, and there would be no way to tell afterwards
+        // that they were ever asked for.
+        ...(hubs.hubIds.length > 0
+          ? { safeZones: { create: hubs.hubIds.map((hubId) => ({ hubId })) } }
+          : {}),
       },
-      select: { ...ITEM_PUBLIC_SELECT, user: { select: ITEM_PUBLIC_USER_SELECT } },
+      select: {
+        ...ITEM_PUBLIC_SELECT,
+        user: { select: ITEM_PUBLIC_USER_SELECT },
+        safeZones: { select: { hub: { select: SAFE_ZONE_HUB_SELECT } } },
+      },
     })
 
     // FIRST_LISTING is one-time — the @@unique([userId, task, refId]) constraint
@@ -148,7 +173,18 @@ export async function POST(req: NextRequest) {
     })
 
     // The creator is the owner, so this response carries the exact point back.
-    return NextResponse.json(shapeItem(item, session.user.id), { status: 201 })
+    //
+    // `safeZones` is rebuilt from the rows rather than left to shapeItem()'s
+    // spread, which would ship the raw `{ hub: { … } }` join shape. Same reason
+    // that function deletes the pickup columns instead of trusting a caller to.
+    const { safeZones, ...itemRow } = item
+    return NextResponse.json(
+      {
+        ...shapeItem(itemRow, session.user.id),
+        safeZones: safeZones.map((s) => v1Hub(s.hub as SafeZoneHubRow)),
+      },
+      { status: 201 },
+    )
   } catch {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }

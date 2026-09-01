@@ -4,7 +4,7 @@ import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { preciseAccessItemIds } from "@/lib/item-visibility"
 import { visibleItemWhere } from "@/lib/blocking"
-import { categorySchema } from "@/lib/validation"
+import { CATEGORY_VALUES, conditionSchema } from "@/lib/validation"
 import { ok, unauthenticated, invalid } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape } from "@/lib/v1/query"
 import { decodeCursor, encodeCursor, olderThan, paginate } from "@/lib/v1/cursor"
@@ -33,10 +33,74 @@ const MAX_RADIUS_KM = 200
 /** Ceiling on rows pulled for an in-memory distance sort. See sortNearest(). */
 const NEAREST_SCAN_CAP = 500
 
+/** MySQL signed INT upper bound — the real ceiling on Item.valueLeaves. */
+const INT_MAX = 2147483647
+
+/**
+ * How many categories one request may name.
+ *
+ * Browsing two or three at once is the normal thing to want; browsing all
+ * twenty is not a filter, it is the unfiltered feed with a longer URL. The cap
+ * also bounds the `IN (...)` list, so a caller cannot hand the planner an
+ * arbitrarily long disjunction.
+ */
+const MAX_CATEGORIES = 5
+
+/**
+ * `category` accepts one value or a COMMA-SEPARATED list: `?category=BOOKS` and
+ * `?category=BOOKS,GAMING` are both valid.
+ *
+ * COMMA-SEPARATED AND NOT A REPEATED PARAMETER, and that is forced rather than
+ * chosen: parseQuery() rejects `?category=A&category=B` outright — a repeated
+ * parameter is refused before zod ever sees it, because resolving one by a
+ * first-or-last rule is a guess about what the caller meant. So the list has to
+ * arrive inside a single value.
+ *
+ * Parsed with superRefine rather than a bare `.transform` so that a bad member
+ * names ITSELF in the error. "Unknown category: BOOSK" is actionable;
+ * "invalid category" sends a client author looking through all five.
+ */
+const categoryListSchema = z
+  .string()
+  .trim()
+  .min(1)
+  // 20 enum names plus separators cannot exceed this; a longer string is not a
+  // category list and is refused before it is split.
+  .max(400)
+  .transform((raw) => [...new Set(raw.split(",").map((c) => c.trim()).filter(Boolean))])
+  .superRefine((list, ctx) => {
+    if (list.length === 0) {
+      ctx.addIssue({ code: "custom", message: "category cannot be empty" })
+      return
+    }
+    if (list.length > MAX_CATEGORIES) {
+      ctx.addIssue({
+        code: "custom",
+        message: `at most ${MAX_CATEGORIES} categories (got ${list.length})`,
+      })
+    }
+    for (const c of list) {
+      if (!(CATEGORY_VALUES as readonly string[]).includes(c)) {
+        ctx.addIssue({ code: "custom", message: `Unknown category: ${c}` })
+      }
+    }
+  })
+  .transform((list) => list as (typeof CATEGORY_VALUES)[number][])
+
+/** A Leaf bound: a non-negative integer inside the column's range. */
+const leafBound = z.coerce
+  .number()
+  .int("must be a whole number")
+  .min(0, "cannot be negative")
+  .max(INT_MAX)
+
 const querySchema = z
   .strictObject({
     ...paginationShape,
-    category: categorySchema.optional(),
+    category: categoryListSchema.optional(),
+    condition: conditionSchema.optional(),
+    minLeaves: leafBound.optional(),
+    maxLeaves: leafBound.optional(),
     q: z.string().trim().min(1).max(100).optional(),
     lat: z.coerce.number().min(-90).max(90).optional(),
     lng: z.coerce.number().min(-180).max(180).optional(),
@@ -49,6 +113,12 @@ const querySchema = z
   .refine((v) => v.radiusKm === undefined || (v.lat !== undefined && v.lng !== undefined), {
     message: "radiusKm requires lat and lng",
   })
+  // An inverted range returns nothing, silently and forever. Refusing it says
+  // so once instead of leaving a client to wonder why the list is empty.
+  .refine(
+    (v) => v.minLeaves === undefined || v.maxLeaves === undefined || v.minLeaves <= v.maxLeaves,
+    { message: "minLeaves cannot be greater than maxLeaves" },
+  )
 
 /** Great-circle distance in km. */
 function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
@@ -68,7 +138,8 @@ export async function GET(req: NextRequest) {
 
   const parsed = parseQuery(req, querySchema)
   if (!parsed.ok) return parsed.response
-  const { limit, category, q, lat, lng, radiusKm, sort } = parsed.data
+  const { limit, category, condition, minLeaves, maxLeaves, q, lat, lng, radiusKm, sort } =
+    parsed.data
   const cursor = decodeCursor(parsed.data.cursor)
   if (parsed.data.cursor && !cursor) return invalid("Malformed cursor")
 
@@ -91,10 +162,32 @@ export async function GET(req: NextRequest) {
   // filter inherit it. That placement is the point: `q` is the search path, and
   // a blocked user's listing being findable by title while being absent from
   // the feed is the same leak wearing a different hat.
+  //
+  // ON THE LEAF RANGE: `valueLeaves` is nullable, and a bound EXCLUDES the nulls
+  // rather than treating them as zero. An unpriced listing has no value, which
+  // is a different fact from having a value of nought — folding the two would
+  // dump every unpriced item into the bottom of every range filter, where it
+  // would look like a 0-Leaf listing to anyone reading the results.
+  const leafRange =
+    minLeaves !== undefined || maxLeaves !== undefined
+      ? {
+          valueLeaves: {
+            ...(minLeaves !== undefined ? { gte: minLeaves } : {}),
+            ...(maxLeaves !== undefined ? { lte: maxLeaves } : {}),
+            not: null,
+          },
+        }
+      : {}
+
   const baseWhere = {
     status: "AVAILABLE" as const,
     ...visibleItemWhere(viewerId),
-    ...(category ? { category } : {}),
+    // `in` for one category as well as several: Prisma emits `= ?` for a
+    // single-element IN, so the one-category case costs nothing and there is
+    // no second code path that could disagree with this one.
+    ...(category ? { category: { in: category } } : {}),
+    ...(condition ? { condition } : {}),
+    ...leafRange,
     ...(q ? { OR: [{ title: { contains: q } }, { description: { contains: q } }] } : {}),
     ...(box ?? {}),
   }
@@ -191,8 +284,15 @@ export async function GET(req: NextRequest) {
       nextCursor,
       // The filters the server actually honoured, echoed back. Cheap, and it
       // makes a client/server disagreement visible instead of mysterious.
+      // NOTE: `category` (a single string or null) became `categories` (always
+      // an array, empty when unfiltered) when the multi-select landed. A field
+      // whose TYPE changes between requests is worse than a renamed one, and
+      // nothing consumed this echo — it is diagnostic, not data.
       applied: {
-        category: category ?? null,
+        categories: category ?? [],
+        condition: condition ?? null,
+        minLeaves: minLeaves ?? null,
+        maxLeaves: maxLeaves ?? null,
         q: q ?? null,
         sort,
         radiusKm: radiusKm ?? null,

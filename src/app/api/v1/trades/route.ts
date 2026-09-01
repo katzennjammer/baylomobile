@@ -6,6 +6,7 @@ import { leafBalances } from "@/lib/leaves"
 import { ok, unauthenticated, invalid } from "@/lib/v1/envelope"
 import { parseQuery, paginationShape, MAX_LIMIT } from "@/lib/v1/query"
 import { decodeCursor, encodeCursor, paginate, cursorDate } from "@/lib/v1/cursor"
+import { SAFE_ZONE_HUB_SELECT, v1Hub, type SafeZoneHubRow } from "@/lib/safe-zones"
 
 export const dynamic = "force-dynamic"
 
@@ -97,7 +98,12 @@ export async function GET(req: NextRequest) {
       id: true,
       status: true,
       offeredLeaves: true,
-      safeZoneMeetup: true,
+      // The hub is selected; the legacy `safeZoneMeetup` boolean on the wire is
+      // DERIVED from it below. One source of truth, two field names -- a stored
+      // boolean beside the key is a second source of truth that can disagree
+      // with the first, which is exactly how the offeredLeaves bug happened.
+      safeZoneHubId: true,
+      safeZoneHub: { select: SAFE_ZONE_HUB_SELECT },
       createdAt: true,
       updatedAt: true,
       senderId: true,
@@ -173,7 +179,11 @@ export async function GET(req: NextRequest) {
         image: firstImage(t.requestedItem.images),
         images: undefined,
       },
-      safeZoneMeetup: t.safeZoneMeetup,
+      // Kept on the wire under its original name so a shipped client that reads
+      // it keeps working, but computed rather than stored. See the select above.
+      safeZoneMeetup: t.safeZoneHubId !== null,
+      /** Which hub, when one was claimed. NULL for every trade that named none. */
+      safeZoneHub: t.safeZoneHub ? v1Hub(t.safeZoneHub as SafeZoneHubRow) : null,
       canConfirm,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,

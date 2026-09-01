@@ -190,8 +190,18 @@ export type AdminActionKind =
   | "LISTING_UNHIDDEN"
   | "USER_SUSPENDED"
   | "USER_UNSUSPENDED"
+  // Safe-Zone hubs. These are acts on SHARED INFRASTRUCTURE rather than on a
+  // person or their content, which is a new kind of entry in this log and
+  // deliberately kept in the same one: a hub coordinate that quietly moved 400
+  // metres, with nobody named against the change, is a worse failure than most
+  // takedowns -- people navigate to these places, and the first sign of trouble
+  // is two strangers standing in different car parks.
+  | "HUB_CREATED"
+  | "HUB_UPDATED"
+  | "HUB_DEACTIVATED"
+  | "HUB_REACTIVATED"
 
-export type AdminTargetType = "REPORT" | "LISTING" | "USER"
+export type AdminTargetType = "REPORT" | "LISTING" | "USER" | "HUB"
 
 /** A Prisma client or a transaction client. */
 type Db = PrismaClient | Prisma.TransactionClient

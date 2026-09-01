@@ -8,6 +8,7 @@ import { MAX_CODE_ATTEMPTS } from "@/lib/swap-code"
 import { confirmSubmitSchema, parseBody } from "@/lib/validation"
 import { enforceRateLimit } from "@/lib/rate-limit-config"
 import { applyEarningsToContracts } from "@/lib/contracts"
+import { resolveMeetupHub } from "@/lib/safe-zones"
 
 export async function POST(
   req: NextRequest,
@@ -49,6 +50,58 @@ export async function POST(
     }
     if (trade.status === "COMPLETED") {
       return NextResponse.json({ correct: true, completed: true })
+    }
+
+    // ── The Safe-Zone meetup claim: VALIDATED HERE, WRITTEN LATER ────────────
+    //
+    // Both checks run BEFORE anything in this request mutates state -- before
+    // the bcrypt compare that can burn one of the partner's guesses, and before
+    // the code is marked used. That ordering is the whole point of doing it up
+    // here rather than beside the write:
+    //
+    //   A malformed claim is a bad REQUEST, and a bad request must cost the
+    //   caller nothing. Validated next to the write, a correct code paired with
+    //   a bad hub id returned 400 *after* the code had already been consumed --
+    //   the caller saw an error for an action that had partly happened, which
+    //   is the shape that turns one confusing 400 into a support ticket.
+    //
+    // The claim is a FOREIGN KEY, not a boolean, and it is only accepted if
+    // BOTH traded listings were already publicly offered at that hub.
+    //
+    // TO BE PLAIN ABOUT WHAT THIS IS: pre-committed self-attestation, NOT
+    // verification. Nothing here observes the world -- somebody who wants the
+    // Leaves without making the trip sends the same request as somebody who
+    // made it. What the check buys is that the claim was pre-committed and
+    // mutual: both owners named this hub on their listings, independently,
+    // before this trade existed, and the counterparty could see it at offer
+    // time. The lie has to be set up in advance, by two people, in public. See
+    // resolveMeetupHub() for why GPS was considered and rejected.
+    //
+    // The deprecated boolean is REFUSED rather than ignored. A shipped client
+    // still sending `safeZone: true` would otherwise get a 200 and no award,
+    // which is the silent-wrong-answer failure this codebase rejects
+    // everywhere else.
+    if (body.safeZone === true && !body.safeZoneHubId) {
+      return NextResponse.json(
+        {
+          error:
+            "A Safe-Zone meetup now has to name which hub you met at. Send safeZoneHubId instead of safeZone.",
+          code: "SAFEZONE_HUB_REQUIRED",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (body.safeZoneHubId) {
+      const claim = await resolveMeetupHub(
+        prisma,
+        body.safeZoneHubId,
+        trade.offeredItemId,
+        trade.requestedItemId,
+      )
+      if (!claim.ok) {
+        return NextResponse.json({ error: claim.message, code: "SAFEZONE_HUB_INVALID" }, { status: 400 })
+      }
     }
 
     const isSender  = trade.senderId === myId
@@ -109,11 +162,13 @@ export async function POST(
       data:  { used: true },
     })
 
-    // Either participant can flag the meetup as a Safe-Zone meetup
-    if (body.safeZone === true) {
+    // The claim was validated before any mutation happened (see above); this is
+    // only the write, and it runs after the code has been verified so that a
+    // failed confirmation cannot record a meetup that was never confirmed.
+    if (body.safeZoneHubId) {
       await prisma.tradeRequest.update({
         where: { id: tradeId },
-        data:  { safeZoneMeetup: true },
+        data:  { safeZoneHubId: body.safeZoneHubId },
       })
     }
 
@@ -239,11 +294,11 @@ export async function POST(
         // awardTask never throws, so a capped or duplicate award can never roll
         // back the trade itself. VERIFIED_SWAP additionally pays only when the
         // counterparty is new to the user inside NEW_PARTNER_WINDOW_DAYS.
-        // safeZoneMeetup is re-read here: the second submitter may have set it
+        // safeZoneHubId is re-read here: the second submitter may have set it
         // in this very request, after `trade` was loaded.
         const settled = await tx.tradeRequest.findUnique({
           where:  { id: tradeId },
-          select: { safeZoneMeetup: true },
+          select: { safeZoneHubId: true },
         })
 
         for (const [uid, partnerId] of [
@@ -253,9 +308,18 @@ export async function POST(
           await awardTask(tx, uid, "VERIFIED_SWAP", tradeId, {
             partnerId, tradeId, description: "Task reward: completed a verified swap",
           })
-          if (settled?.safeZoneMeetup) {
+          // NULL hub means no claim. The award condition is the foreign key
+          // itself -- there is no separate flag that could disagree with it.
+          if (settled?.safeZoneHubId) {
+            // partnerId is REQUIRED here, not decorative. SAFEZONE_MEETUP is a
+            // repeatable task and is now partner-gated exactly as VERIFIED_SWAP
+            // is; awardTask() fails closed without it. Omitting it was half of
+            // the faucet gap closed on 28 Aug 2026 -- a colluding pair could
+            // bounce two items back and forth and collect 10 Leaves each per
+            // trade, bounded only by the weekly cap, while VERIFIED_SWAP
+            // correctly paid them once a month.
             await awardTask(tx, uid, "SAFEZONE_MEETUP", tradeId, {
-              tradeId, description: "Task reward: confirmed a Safe-Zone meetup",
+              partnerId, tradeId, description: "Task reward: confirmed a Safe-Zone meetup",
             })
           }
         }
