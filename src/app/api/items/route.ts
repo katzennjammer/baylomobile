@@ -3,6 +3,7 @@ import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { awardTaskAsync } from "@/lib/tasks"
 import { createItemSchema, parseBody, categorySchema } from "@/lib/validation"
+import { imageHashRows, leadImageHash } from "@/lib/image-hashes"
 import { decideItemValue } from "@/lib/valuation-server"
 import { visibleItemWhere } from "@/lib/blocking"
 import {
@@ -124,6 +125,10 @@ export async function POST(req: NextRequest) {
     // is a 400 with nothing written rather than an orphaned listing plus a
     // failed association. No `currentHubIds` here: nothing exists yet to
     // retain, so every hub named must be active.
+    // One derivation, two destinations. See @/lib/image-hashes.
+    const hashRows = imageHashRows(body)
+    const leadHash = leadImageHash(hashRows)
+
     const hubs = await resolveHubIds(prisma, body.hubIds ?? [])
     if (!hubs.ok) return NextResponse.json({ error: hubs.message }, { status: 400 })
 
@@ -149,7 +154,11 @@ export async function POST(req: NextRequest) {
               pickupAddress: body.pickupAddress ?? null,
             }
           : {}),
-        ...(body.imageHash ? { imageHash: body.imageHash } : {}),
+        // BOTH the legacy column and the per-photo rows, from one derivation so
+        // they cannot drift. `imageHash` stays because the web wizard reads it
+        // back in edit mode; `imageHashes` is what the duplicate check scans.
+        ...(leadHash ? { imageHash: leadHash } : {}),
+        ...(hashRows.length > 0 ? { imageHashes: { create: hashRows } } : {}),
         // Written inline with the item rather than in a second statement: a
         // listing that exists without the hubs its owner picked is a listing
         // that quietly lost them, and there would be no way to tell afterwards

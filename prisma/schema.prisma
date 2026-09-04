@@ -26,6 +26,22 @@ model User {
   // so two concurrent verifications cannot both pay out.
   signupGrantClaimed Boolean @default(false)
 
+  // Date of birth, and the 18+ gate that reads it.
+  //
+  // A DATE column, not a DateTime: this is a calendar fact and it has no time
+  // and no zone. Storing an instant means a user in UTC+8 born exactly eighteen
+  // years ago is written as the day before, and for exactly that person on
+  // exactly that day the column decides whether they may hold an account. See
+  // src/lib/age.ts, which is the only place the arithmetic is done.
+  //
+  // NULLABLE, and it stays nullable. Every account created before this column
+  // existed has no value here, and a required column would mean either
+  // inventing dates of birth for real users or locking them out. New accounts
+  // are refused without one — /api/auth/register requires it, and the Google
+  // exchange reports `needsDateOfBirth` so the native client can ask for it —
+  // so the null set only ever shrinks.
+  dateOfBirth DateTime? @db.Date
+
   avatar      String?
   bio         String?  @db.Text
   location    String?
@@ -273,6 +289,16 @@ model Item {
   // refuses while it is set.
   moderationHiddenAt DateTime?
 
+  /// THE LEAD PHOTO'S dHash, AND ONLY THE LEAD PHOTO'S.
+  ///
+  /// Kept because the web listing wizard round-trips it through its edit mode
+  /// and GET /api/v1/items/[id] returns it. It is NO LONGER what the duplicate
+  /// check reads: that is ItemImageHash, which holds one row per photo. A
+  /// listing's five photos were five ways to re-post someone else's item and
+  /// only the first was ever compared.
+  ///
+  /// Write paths keep this in step with position 0 of ItemImageHash. If the two
+  /// ever disagree, the TABLE is right.
   imageHash String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -290,6 +316,35 @@ model Item {
   /// delivery-only or arrange-it-in-chat -- it is not an incomplete listing.
   /// Capped at MAX_ITEM_HUBS by the write paths; see @/lib/safe-zones.
   safeZones ItemSafeZone[]
+
+  /// One dHash per photo. See ItemImageHash.
+  imageHashes ItemImageHash[]
+}
+
+/// ONE PERCEPTUAL HASH PER PHOTO, WHICH IS THE POOL THE DUPLICATE CHECK SCANS.
+///
+/// Item.imageHash is a single column, so a listing with five photos put exactly
+/// one image into the duplicate pool. Re-posting somebody else's photo #3 was
+/// never caught, and anyone who noticed had an unlimited bypass that needed no
+/// tooling -- just a second photo.
+///
+/// `position` is the index into the listing's own `images` JSON array, so a
+/// match knows WHICH photo it hit. Stage 2 sends Claude that photo rather than
+/// the listing's first one; comparing a matched photo #3 against a stranger's
+/// photo #1 would have Claude correctly answer "different" and overturn a true
+/// positive.
+model ItemImageHash {
+  itemId   String
+  position Int
+  hash     String @db.VarChar(64)
+  item     Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  /// The PK's leading column is the only lookup by item anyone needs, and the
+  /// pair enforces one hash per photo slot. The duplicate scan reads the whole
+  /// table and compares in JS -- Hamming distance is not something an index can
+  /// answer -- so there is deliberately no index on `hash`: it would be paid for
+  /// on every write and used by nothing.
+  @@id([itemId, position])
 }
 
 model TradeRequest {

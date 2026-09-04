@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { NextResponse } from "next/server"
 import { MAX_ITEM_HUBS } from "@/lib/safe-zones"
+import { MAX_AGE, MIN_AGE, isAdult, parseDateOfBirth } from "@/lib/age"
 
 /**
  * Request body schemas.
@@ -105,11 +106,65 @@ export const emailSchema = z
   .max(320)
   .pipe(z.email("Enter a valid email address"))
 
+/**
+ * Date of birth, as a bare calendar date.
+ *
+ * TWO SEPARATE REFUSALS, and they are separate on purpose. The shape check
+ * ("that is not a real past date") is a validation error and belongs in
+ * `issues` against the field. The AGE check is not a validation error — it is a
+ * decision about the account — and it is deliberately NOT done here, because a
+ * 400 with `issues[0].message` is the wrong answer to "you are sixteen": the
+ * clients answer that with a whole screen, and they need a stable `code` to
+ * branch on rather than a message that may be reworded. The routes do the age
+ * check and answer UNDER_18; see /api/auth/register.
+ *
+ * The format is `YYYY-MM-DD` and nothing else. `@/lib/age` explains why a
+ * timestamp is not accepted, and it is the only place the calendar arithmetic
+ * lives.
+ */
+export const dateOfBirthSchema = z
+  .string()
+  .trim()
+  .max(10, "Use the format YYYY-MM-DD")
+  .refine(
+    (value) => parseDateOfBirth(value) !== null,
+    `Enter a real date of birth as YYYY-MM-DD, no earlier than ${MAX_AGE} years ago`,
+  )
+
 export const registerSchema = z.object({
   name: text(MAX_NAME),
   email: emailSchema,
   password: passwordSchema,
+  dateOfBirth: dateOfBirthSchema,
 })
+
+/** POST /api/auth/date-of-birth — the Google flow's second step. */
+export const dateOfBirthBodySchema = z.object({ dateOfBirth: dateOfBirthSchema })
+
+/**
+ * The one answer both routes give to an under-age date.
+ *
+ * A named helper rather than two copies, because the shape is what the clients
+ * branch on: `code === "UNDER_18"` is what puts the rejection screen on the
+ * phone, and a route that answered 400 with a different code would silently
+ * degrade to a red line under a field. 403 rather than 400 — the request is
+ * well formed and the answer is still no.
+ */
+export function underAgeResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error: `You must be ${MIN_AGE} or older to use Baylo`,
+      code: "UNDER_18",
+    },
+    { status: 403 },
+  )
+}
+
+/** True when a validated `YYYY-MM-DD` clears the age gate. */
+export function clearsAgeGate(dateOfBirth: string): boolean {
+  const parts = parseDateOfBirth(dateOfBirth)
+  return parts !== null && isAdult(parts)
+}
 
 export const forgotPasswordSchema = z.object({ email: emailSchema })
 
@@ -168,6 +223,23 @@ const itemHubField = {
     .optional(),
 }
 
+/**
+ * ONE HASH PER PHOTO, ALIGNED WITH `images` BY INDEX.
+ *
+ * Nullable entries are load-bearing and are not a slack schema: the phash route
+ * answers `{ hash: null, status: "passed" }` when it could not fetch or decode
+ * an image, so a photo can legitimately reach here with no hash beside a photo
+ * that has one. Dropping the nulls client-side would slide every later hash one
+ * position to the left and attach it to the wrong image.
+ *
+ * `imageHash` beside it is the lead photo's, still accepted and still written,
+ * because the web listing wizard sends only that. See the note in the schema.
+ */
+const imageHashesField = z
+  .array(z.string().trim().max(128).nullable())
+  .max(10)
+  .optional()
+
 export const createItemSchema = z.object({
   title: text(MAX_TITLE).optional(),
   wantedItem: text(MAX_TITLE).optional(),
@@ -178,6 +250,7 @@ export const createItemSchema = z.object({
   images: z.array(z.string().trim().max(MAX_URL)).max(10).optional(),
   wantedItems: optionalText(MAX_WANTED),
   imageHash: z.string().trim().max(128).nullish(),
+  imageHashes: imageHashesField,
   ...itemPickupFields,
   ...itemHubField,
 }).refine((v) => !!(v.title ?? v.wantedItem), {
@@ -194,6 +267,7 @@ export const updateItemSchema = z.object({
   images: z.array(z.string().trim().max(MAX_URL)).max(10).optional(),
   wantedItems: optionalText(MAX_WANTED),
   imageHash: z.string().trim().max(128).nullish(),
+  imageHashes: imageHashesField,
   ...itemPickupFields,
   ...itemHubField,
 })

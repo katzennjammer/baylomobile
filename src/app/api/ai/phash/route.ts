@@ -40,11 +40,16 @@ const DUPLICATE_ACTION = process.env.DUPLICATE_ACTION ?? "block"
 // re-uploaded from a second account, published unchallenged; with the filter
 // gone all three match at Hamming distance 0.
 //
-// REMOVED is in the pool too. A moderator-removed listing is the last photo
-// that should become re-postable, and its owner is not penalised by its
-// presence: Stage 1B below runs first and answers "self", which is allowed.
-// So the rule is "every image this app has accepted", and status is not
-// consulted at all.
+// NOTHING IS EXCLUDED, INCLUDING TAKEDOWNS. Two different things hide a
+// listing: `status = REMOVED`, which its OWNER sets and can undo via
+// /api/items/[id]/relist, and `moderationHiddenAt`, which a moderator sets and
+// the owner cannot. Neither is consulted here. A photo a moderator took down is
+// the last one that should quietly become re-postable by a stranger, and an
+// owner who delisted their own item is not blocked by their own row either —
+// Stage 1B runs first and answers "self", which is allowed.
+//
+// So the rule is simply "every image this app has accepted", and no status
+// column is read at all.
 
 // ── dHash ─────────────────────────────────────────────────────────────────────
 // Resize to 9×8, compare each pixel to its right neighbour per row → 64-bit
@@ -137,44 +142,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ hash: null, status: "passed" })
   }
 
-  // ── Stage 1B: self-check (own items — allowed, just note it) ─────────────
-  const ownItems = await prisma.item.findMany({
-    where: { imageHash: { not: null }, userId: session.user.id },
-    select: { id: true, imageHash: true },
+  // ── Stage 1B: self-check (own photos — allowed, just note it) ────────────
+  //
+  // ItemImageHash, not Item.imageHash: one row per PHOTO. A listing's second
+  // and later photos used to be in no pool at all, so re-posting someone's
+  // photo #3 was never compared against anything.
+  //
+  // `images` is deliberately NOT selected here or in 1C. The scan needs only
+  // the hashes; the one matched listing's URLs are fetched afterwards, in a
+  // single lookup by id. Selecting them inline would drag every candidate's
+  // whole JSON array across for the sake of at most one of them — and would
+  // have grown fivefold with this change rather than shrinking.
+  const ownHashes = await prisma.itemImageHash.findMany({
+    where: { item: { userId: session.user.id } },
+    select: { itemId: true, position: true, hash: true },
   })
-  console.log(`[phash] Own items (any status, hashed): ${ownItems.length}`)
-  for (const item of ownItems) {
-    if (!item.imageHash) continue
-    const dist = hammingDistance(hash, item.imageHash)
-    console.log(`[phash] Self-check item ${item.id}: distance=${dist}`)
+  console.log(`[phash] Own photo hashes (any status): ${ownHashes.length}`)
+  for (const row of ownHashes) {
+    const dist = hammingDistance(hash, row.hash)
     if (dist <= THRESHOLD) {
-      return NextResponse.json({ hash, status: "self", matchedItemId: item.id, distance: dist })
+      console.log(`[phash] Self-check HIT: item ${row.itemId} photo ${row.position} @ distance ${dist}`)
+      return NextResponse.json({ hash, status: "self", matchedItemId: row.itemId, distance: dist })
     }
   }
 
-  // ── Stage 1C: compare against other users' items ──────────────────────────
-  const otherItems = await prisma.item.findMany({
-    where: {
-      imageHash: { not: null },
-      userId: { not: session.user.id },
-    },
-    select: { id: true, imageHash: true, images: true },
+  // ── Stage 1C: compare against other users' photos ─────────────────────────
+  const otherHashes = await prisma.itemImageHash.findMany({
+    where: { item: { userId: { not: session.user.id } } },
+    select: { itemId: true, position: true, hash: true },
   })
 
-  console.log(`[phash] Candidates (other users, any status, hashed): ${otherItems.length}`)
+  console.log(`[phash] Candidate photo hashes (other users, any status): ${otherHashes.length}`)
   console.log(`[phash] New upload hash: ${hash}`)
 
-  let candidate: { id: string; existingImageUrl: string; distance: number } | null = null
+  let candidate: { id: string; position: number; distance: number } | null = null
   let closestDist = Infinity
   let closestItemId: string | null = null
-  for (const item of otherItems) {
-    if (!item.imageHash) continue
-    const dist = hammingDistance(hash, item.imageHash)
-    if (dist < closestDist) { closestDist = dist; closestItemId = item.id }
+  for (const row of otherHashes) {
+    const dist = hammingDistance(hash, row.hash)
+    if (dist < closestDist) { closestDist = dist; closestItemId = row.itemId }
     if (dist <= THRESHOLD) {
-      let existingImageUrl = ""
-      try { existingImageUrl = (JSON.parse(item.images) as string[])[0] ?? "" } catch { /* skip */ }
-      candidate = { id: item.id, existingImageUrl, distance: dist }
+      candidate = { id: row.itemId, position: row.position, distance: dist }
       break
     }
   }
@@ -189,7 +197,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       hash, status: "passed",
       _debug: {
-        candidatesChecked: otherItems.length,
+        candidatesChecked: otherHashes.length,
         closestDistance:   closestDist === Infinity ? null : closestDist,
         closestItemId,
         threshold: THRESHOLD,
@@ -197,8 +205,30 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  // ── The matched listing's own photo, for Stage 2 ──────────────────────────
+  //
+  // THE PHOTO THAT MATCHED, NOT THE LISTING'S FIRST ONE. This used to read
+  // `images[0]` unconditionally, which was harmless only while every listing
+  // contributed a single hash. Now that photo #3 can be the match, sending
+  // Claude photo #1 asks it to compare two pictures that really are different,
+  // it correctly answers "no", and a true positive is overturned into a pass.
+  //
+  // Falls back to images[0] if the array is shorter than the position — a
+  // listing whose photos were edited without its hashes being resent. That is
+  // the conservative direction: Stage 2 still gets a picture from the right
+  // listing and can only be more sceptical than the truth, never less.
+  let existingImageUrl = ""
+  try {
+    const matched = await prisma.item.findUnique({
+      where: { id: candidate.id },
+      select: { images: true },
+    })
+    const urls = JSON.parse(matched?.images ?? "[]") as string[]
+    existingImageUrl = urls[candidate.position] ?? urls[0] ?? ""
+  } catch { /* leave empty — handled immediately below */ }
+
   // ── Stage 2: Claude vision confirmation ───────────────────────────────────
-  if (!candidate.existingImageUrl) {
+  if (!existingImageUrl) {
     // No stored image URL to send to Claude — fall back to Stage 1 result
     console.warn("[phash] Stage 2 skipped: no stored image URL for item", candidate.id)
     const status = DUPLICATE_ACTION === "block" ? "failed" : "passed"
@@ -207,7 +237,7 @@ export async function POST(req: NextRequest) {
 
   let aiConfirmed: boolean
   try {
-    aiConfirmed = await confirmWithAI(imageUrl, candidate.existingImageUrl)
+    aiConfirmed = await confirmWithAI(imageUrl, existingImageUrl)
   } catch (e) {
     // Vision API failed — fall back to Stage 1 decision conservatively
     console.error("[phash] Stage 2 AI call failed, falling back to Stage 1:", e)

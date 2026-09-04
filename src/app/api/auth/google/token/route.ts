@@ -115,5 +115,27 @@ export async function POST(req: NextRequest) {
   await markVerified(user.id)
 
   const pair = await issueTokenPair(user.id)
-  return NextResponse.json({ ...pair, user: toTokenUser(user) })
+
+  /**
+   * The one thing a Google ID token cannot tell this backend.
+   *
+   * Baylo is 18+, and Google asserts an email, a name and a picture — never an
+   * age. So an account that arrived this way owes a date of birth, and the
+   * native client is told so rather than left to guess: it holds this pair
+   * WITHOUT installing it, asks, POSTs /api/auth/date-of-birth, and adopts the
+   * session only once that is accepted.
+   *
+   * Reported rather than ENFORCED here, and that is deliberate. Refusing to
+   * issue the pair would leave the client with no credential to answer with,
+   * and the one endpoint that could set the date of birth is authenticated.
+   * The write-once conditional update in that route is what makes the pair safe
+   * to hand over first.
+   *
+   * ADDITIVE. A client that predates this field ignores it and behaves exactly
+   * as it did before — which is correct for the web app, whose own signup form
+   * collects the date at registration.
+   */
+  const needsDateOfBirth = user.dateOfBirth === null
+
+  return NextResponse.json({ ...pair, user: toTokenUser(user), needsDateOfBirth })
 }

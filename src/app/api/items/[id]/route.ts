@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { resolveSession } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { parseBody, updateItemSchema } from "@/lib/validation"
+import { imageHashRows, leadImageHash } from "@/lib/image-hashes"
 import { decideItemValue } from "@/lib/valuation-server"
 import { isBlockedEitherWay } from "@/lib/blocking"
 import {
@@ -111,6 +112,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       where: { id },
       select: {
         userId: true, category: true, condition: true, valueLeaves: true,
+        // Compared against the incoming array to tell a real photo change from
+        // the web wizard restating the images it already had. See the hash
+        // block below.
+        images: true,
         // The hubs this listing ALREADY has. Needed by resolveHubIds() below,
         // which permits a deactivated hub to be RETAINED but not newly added --
         // see the long note on that function for why the symmetric rule makes
@@ -183,6 +188,28 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const hasPickup =
       body.localPickup === true && body.pickupLat != null && body.pickupLng != null
 
+    // ── Which requests restate the photo hashes ─────────────────────────────
+    //
+    // Same convention as the hubs above — omitting leaves them alone — but the
+    // test cannot simply be "was a hash field sent", because the WEB wizard
+    // sends `imageHash` and `images` on every edit whether or not the photos
+    // moved. Taking that as a restatement would delete a mobile listing's five
+    // per-photo rows and write back the single lead hash the web client knows,
+    // so editing a title in the browser would quietly drop four photos out of
+    // the duplicate pool. That is the same bug as the AVAILABLE filter wearing
+    // a different hat, and it would be even harder to notice.
+    //
+    // So:
+    //   - `imageHashes` sent  -> the client knows every photo. Authoritative.
+    //   - photos actually changed -> the stored rows describe images that are
+    //     gone, so they must go too; the lead hash is all this client knows.
+    //   - otherwise -> leave the rows alone.
+    const imagesChanged =
+      body.images !== undefined &&
+      JSON.stringify(body.images) !== item.images
+    const hashesTouched = body.imageHashes !== undefined || imagesChanged
+    const hashRows = imageHashRows(body)
+
     const updated = await prisma.item.update({
       where: { id },
       data: {
@@ -196,7 +223,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         ...valuationData,
         ...(body.images !== undefined && { images: JSON.stringify(body.images) }),
         ...(body.wantedItems !== undefined && { wantedItems: body.wantedItems }),
-        ...(body.imageHash !== undefined && { imageHash: body.imageHash ?? null }),
+        ...(hashesTouched && { imageHash: leadImageHash(hashRows) }),
         ...(pickupTouched
           ? hasPickup
             ? {
@@ -222,6 +249,32 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     // lock-wait timeout waiting for a busy evening.
     if (hubs?.ok) {
       await prisma.$transaction((tx) => setItemHubs(tx, id, hubs.hubIds))
+    }
+
+    // ── The per-photo hashes ────────────────────────────────────────────────
+    //
+    // Delete-then-insert, like the hubs above and for the same reason: `update`
+    // cannot express a positional rewrite of a child table in one `data`.
+    //
+    // ONLY WHEN THE CLIENT ACTUALLY SENT HASHES. A PATCH that changes the title
+    // and nothing else must not empty this listing's rows and silently drop it
+    // out of the duplicate pool — which is the same class of bug as the
+    // AVAILABLE filter, arriving by a different door.
+    //
+    // Not in a transaction with the column update, on the same reasoning the
+    // hub comment gives. The window between the delete and the insert is one
+    // statement wide, and the worst a concurrent check sees is this listing's
+    // own photos missing from the pool for that moment. Its owner is not the
+    // person that pool is defending against.
+    if (hashesTouched) {
+      await prisma.$transaction(async (tx) => {
+        await tx.itemImageHash.deleteMany({ where: { itemId: id } })
+        if (hashRows.length > 0) {
+          await tx.itemImageHash.createMany({
+            data: hashRows.map((r) => ({ itemId: id, ...r })),
+          })
+        }
+      })
     }
 
     // Re-read only when the hubs actually moved: the `updated` row above was

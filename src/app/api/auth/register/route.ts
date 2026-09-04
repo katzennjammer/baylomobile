@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import prisma from "@/lib/prisma"
 import { clientIp, enforceRateLimit } from "@/lib/rate-limit-config"
-import { parseBody, registerSchema } from "@/lib/validation"
+import { clearsAgeGate, parseBody, registerSchema, underAgeResponse } from "@/lib/validation"
+import { parseDateOfBirth, toStoredDate } from "@/lib/age"
 import { issueVerificationToken } from "@/lib/email-verification"
 
 export async function POST(req: NextRequest) {
@@ -21,7 +22,25 @@ export async function POST(req: NextRequest) {
     // and became a 500.
     const parsed = await parseBody(req, registerSchema)
     if (!parsed.ok) return parsed.response
-    const { name, email, password } = parsed.data
+    const { name, email, password, dateOfBirth } = parsed.data
+
+    // THE AGE GATE, SERVER-SIDE, BEFORE THE ACCOUNT EXISTS.
+    //
+    // The native and web clients both check this first so the refusal is
+    // instant and explicable, and neither check counts: a client-side gate is
+    // one that anybody skips by POSTing here directly, which is the only way it
+    // would ever actually be attacked. Refusing before `user.create` is what
+    // makes it true that no under-age account is ever written — a check after
+    // the insert would leave a row behind on every attempt.
+    //
+    // Answered with UNDER_18 rather than as a field validation issue. It is not
+    // a malformed request; it is a well-formed one whose answer is no, and the
+    // clients render a whole screen for it.
+    if (!clearsAgeGate(dateOfBirth)) return underAgeResponse()
+
+    // Non-null: registerSchema already refused anything parseDateOfBirth
+    // rejects, and clearsAgeGate re-parsed it a second time above.
+    const dob = parseDateOfBirth(dateOfBirth)!
 
     const existing = await prisma.user.findUnique({ where: { email } })
     if (existing) {
@@ -30,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const hashed = await bcrypt.hash(password, 12)
     const user = await prisma.user.create({
-      data: { name, email, password: hashed },
+      data: { name, email, password: hashed, dateOfBirth: toStoredDate(dob) },
     })
 
     // Send the verification email, and do NOT let it decide whether the account

@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import toast from "react-hot-toast"
 import Navbar from "@/components/Navbar"
+// The same three the register route calls. Imported rather than reimplemented:
+// a second copy of "is this person 18" is a second copy that can disagree with
+// the first about a birthday falling on today.
+import { MIN_AGE, isAdult, parseDateOfBirth } from "@/lib/age"
 
 export type SwapDisplay = {
   id: string
@@ -127,7 +131,7 @@ function RegisterForm({ swaps, userCount, recentUsers }: { swaps: SwapDisplay[];
   const router = useRouter()
 
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "" })
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "", dateOfBirth: "" })
   const [showPass, setShowPass] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [focused, setFocused] = useState<string | null>(null)
@@ -138,12 +142,31 @@ function RegisterForm({ swaps, userCount, recentUsers }: { swaps: SwapDisplay[];
       toast.error("Passwords do not match")
       return
     }
+    // The 18+ gate, checked here so the answer is instant, and checked again by
+    // /api/auth/register, which is the one that decides. `parseDateOfBirth`
+    // and `isAdult` are the SAME functions the route calls — imported rather
+    // than reimplemented, so the two cannot drift into disagreeing about a
+    // birthday that falls on today.
+    const dob = parseDateOfBirth(form.dateOfBirth)
+    if (!dob) {
+      toast.error("Enter your date of birth")
+      return
+    }
+    if (!isAdult(dob)) {
+      toast.error(`You must be ${MIN_AGE} or older to use Baylo`)
+      return
+    }
     setLoading(true)
     try {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password }),
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          dateOfBirth: form.dateOfBirth,
+        }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -401,6 +424,31 @@ function RegisterForm({ swaps, userCount, recentUsers }: { swaps: SwapDisplay[];
                   <EyeIcon open={showConfirm} />
                 </button>
               </div>
+            </div>
+
+            {/* Date of birth. Baylo is 18+; the server refuses anything under. */}
+            <div>
+              <label style={labelStyle}>Date of Birth</label>
+              <input
+                type="date"
+                required
+                value={form.dateOfBirth}
+                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                onFocus={() => setFocused("dob")}
+                onBlur={() => setFocused(null)}
+                // A native date input already emits YYYY-MM-DD, which is exactly
+                // the wire format /api/auth/register takes — no formatting on
+                // the way out, and no timezone to lose. `max` stops the picker
+                // offering the future; it is a convenience, not the gate.
+                max={new Date().toISOString().slice(0, 10)}
+                style={inputStyle(focused === "dob")}
+              />
+              <p style={{
+                fontFamily: "var(--ff)", fontSize: 12, lineHeight: 1.5,
+                color: "var(--muted)", marginTop: 6,
+              }}>
+                Baylo is for people aged {MIN_AGE} and over. This is never shown on your profile.
+              </p>
             </div>
 
             {/* Submit */}
