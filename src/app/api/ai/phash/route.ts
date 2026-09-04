@@ -26,6 +26,26 @@ const THRESHOLD = parseInt(process.env.PHASH_THRESHOLD ?? "10", 10)
 // "flag"  → status:"passed" (allow but include flagged:true in response)
 const DUPLICATE_ACTION = process.env.DUPLICATE_ACTION ?? "block"
 
+// WHICH LISTINGS ARE IN THE DUPLICATE POOL — DELIBERATELY ALL OF THEM.
+//
+// This used to read `status: "AVAILABLE"`, and that was the bug. The moment a
+// listing was traded it became OWNED or TRADED, left the pool, and its photo
+// was free for anyone to post again with no warning. The check was strongest
+// for listings nobody had wanted yet and silent for the ones that had actually
+// changed hands — exactly backwards, since a stranger reusing the photo of an
+// item that has already been traded away is the strongest signal there is.
+//
+// Measured on the live table when this was found: every identical-image pair
+// but one had at least one side out of the pool. Two of three real images,
+// re-uploaded from a second account, published unchallenged; with the filter
+// gone all three match at Hamming distance 0.
+//
+// REMOVED is in the pool too. A moderator-removed listing is the last photo
+// that should become re-postable, and its owner is not penalised by its
+// presence: Stage 1B below runs first and answers "self", which is allowed.
+// So the rule is "every image this app has accepted", and status is not
+// consulted at all.
+
 // ── dHash ─────────────────────────────────────────────────────────────────────
 // Resize to 9×8, compare each pixel to its right neighbour per row → 64-bit
 // binary string. Encodes local gradients, so JPEG recompression / minor resizes
@@ -119,10 +139,10 @@ export async function POST(req: NextRequest) {
 
   // ── Stage 1B: self-check (own items — allowed, just note it) ─────────────
   const ownItems = await prisma.item.findMany({
-    where: { status: "AVAILABLE", imageHash: { not: null }, userId: session.user.id },
+    where: { imageHash: { not: null }, userId: session.user.id },
     select: { id: true, imageHash: true },
   })
-  console.log(`[phash] Own items (AVAILABLE, hashed): ${ownItems.length}`)
+  console.log(`[phash] Own items (any status, hashed): ${ownItems.length}`)
   for (const item of ownItems) {
     if (!item.imageHash) continue
     const dist = hammingDistance(hash, item.imageHash)
@@ -135,14 +155,13 @@ export async function POST(req: NextRequest) {
   // ── Stage 1C: compare against other users' items ──────────────────────────
   const otherItems = await prisma.item.findMany({
     where: {
-      status: "AVAILABLE",
       imageHash: { not: null },
       userId: { not: session.user.id },
     },
     select: { id: true, imageHash: true, images: true },
   })
 
-  console.log(`[phash] Candidates (other users, AVAILABLE, hashed): ${otherItems.length}`)
+  console.log(`[phash] Candidates (other users, any status, hashed): ${otherItems.length}`)
   console.log(`[phash] New upload hash: ${hash}`)
 
   let candidate: { id: string; existingImageUrl: string; distance: number } | null = null
