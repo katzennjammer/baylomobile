@@ -73,6 +73,32 @@ export const RATE_LIMITS = {
    * forever, nothing more.
    */
   block: { limit: 60, windowMs: HOUR },
+  /**
+   * Liking and unliking, together on one budget.
+   *
+   * ONE BUDGET FOR BOTH METHODS ON PURPOSE. Split, a script alternating
+   * POST/DELETE against one listing gets twice the allowance and writes twice
+   * the rows, which is exactly the pattern being limited -- the abuse here is
+   * not "too many likes", it is churn: every toggle is an INSERT or a DELETE
+   * plus a count, and a loop is a cheap way to make the feed's hottest table
+   * expensive.
+   *
+   * 300 an hour is five a minute sustained, far above a person tapping hearts
+   * down a feed and far below what a loop wants. Keyed on the user id, like
+   * every other authenticated limit here.
+   */
+  like: { limit: 300, windowMs: HOUR },
+  /**
+   * Posting a comment. Much tighter than `like`, because a comment is content
+   * somebody else has to read: an unlimited comment endpoint is a spam and
+   * harassment tool in a way a like is not, and the person on the other end
+   * cannot un-see forty of them.
+   *
+   * 60 an hour is one a minute, which no real conversation on a listing
+   * approaches and which makes flooding a stranger's listing slow enough to be
+   * reported before it is finished.
+   */
+  comment: { limit: 60, windowMs: HOUR },
 } as const satisfies Record<string, RateRule>
 
 export type RateLimitName = keyof typeof RATE_LIMITS

@@ -116,6 +116,37 @@ export function v1ItemStatsSelect(viewerId: string) {
   } as const
 }
 
+/** The `stats` block on the wire. */
+export interface V1Stats {
+  likes: number
+  liked: boolean
+  comments: number
+}
+
+/**
+ * The row that v1ItemStatsSelect() produces, turned into the wire block.
+ *
+ * Pulled out of v1Item() so the like and comment routes can answer with the
+ * SAME shape the feed sent, from the same code. That matters more than the four
+ * lines it saves: those routes exist so a client can reconcile a card it has
+ * already drawn, and a reconciliation that arrives in a different shape than
+ * the original is worse than no reconciliation at all.
+ *
+ * `liked` is `length > 0` and not `!!row.likes` -- the select above always
+ * returns an array, empty when this viewer has not liked it, and an empty array
+ * is truthy.
+ */
+export function v1Stats(row: {
+  _count?: { likes: number; comments: number }
+  likes?: { id: string }[]
+}): V1Stats {
+  return {
+    likes: row._count?.likes ?? 0,
+    liked: (row.likes?.length ?? 0) > 0,
+    comments: row._count?.comments ?? 0,
+  }
+}
+
 export interface V1Owner {
   id: string
   name: string
@@ -178,7 +209,7 @@ export interface V1Item {
    */
   safeZones: V1Hub[] | null
   owner: V1Owner
-  stats: { likes: number; liked: boolean; comments: number }
+  stats: V1Stats
   createdAt: Date
 }
 
@@ -277,11 +308,7 @@ export function v1Item(
       // under-claims rather than inventing a rung for someone.
       trustTier: tiers?.get(row.user.id) ?? null,
     },
-    stats: {
-      likes: row._count?.likes ?? 0,
-      liked: (row.likes?.length ?? 0) > 0,
-      comments: row._count?.comments ?? 0,
-    },
+    stats: v1Stats(row),
     createdAt: row.createdAt,
   }
 }
